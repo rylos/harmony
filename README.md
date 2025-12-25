@@ -41,10 +41,10 @@ The system is divided into two layers:
 - **Libraries**: `PyQt6` (Core, Widgets, Gui).
 - **Layout System**:
   - Main `QVBoxLayout`.
-  - No fixed height (`setMinimumHeight(800)` + `adjustSize()`) to avoid overlapping on different screens.
-  - **Smart Remote Section**: Two-column layout (`QHBoxLayout`):
-    - Left: Shield (D-Pad `QGridLayout` + Actions `QHBoxLayout`).
-    - Right: TV Numpad (`QGridLayout`).
+  - **Smart Remote Section**: Unified, context-aware interface.
+    - **Smart D-Pad (Left)**: Routes navigation commands (Up/Down/OK/Back) to the active device based on current Activity (e.g., Samsung TV vs Shield).
+    - **TV Controls (Right)**: Dedicated Numpad and color keys for TV control.
+    - **Compact Design**: Highly optimized layout for minimal screen footprint.
 - **Helper**: `create_btn(text, cmd, icon)` handles creation and signal binding.
 - **Styling**: Inline CSS with Python dictionary `C` for consistent theming.
 
