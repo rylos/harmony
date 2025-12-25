@@ -1,4 +1,4 @@
-#!/home/marco/dev/harmony/harmony_env/bin/python
+#!/usr/bin/env python3
 """
 🚀 Harmony Hub FAST CLI Controller
 CLI ottimizzato per velocità massima con Press/Release precision
@@ -9,6 +9,7 @@ import aiohttp
 import json
 import argparse
 import sys
+import uuid
 import random
 from typing import Dict
 
@@ -31,33 +32,76 @@ class FastHarmonyHub:
         self.base_url = f"http://{HUB_IP}:8088"
         self.ws_url = f"{self.base_url}/?domain=svcs.myharmony.com&hubId={REMOTE_ID}"
         self.session = None
+        self._connected = False
+        self._ws = None
+
+    async def connect(self):
+        """Connessione persistente"""
+        if self.session is None:
+             # Timeout ottimizzato per velocità
+            timeout = aiohttp.ClientTimeout(total=3, connect=1)
+            self.session = aiohttp.ClientSession(timeout=timeout)
         
+        if not self._connected or self._ws is None or self._ws.closed:
+            try:
+                self._ws = await self.session.ws_connect(self.ws_url)
+                self._connected = True
+            except Exception as e:
+                self._connected = False
+                raise e
+
+    async def close(self):
+        if self._ws:
+            await self._ws.close()
+        if self.session:
+            await self.session.close()
+        self._connected = False
+
     async def __aenter__(self):
-        # Timeout ottimizzato per velocità
-        timeout = aiohttp.ClientTimeout(total=3, connect=1)
-        self.session = aiohttp.ClientSession(timeout=timeout)
+        await self.connect()
         return self
         
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self.session:
-            await self.session.close()
+        await self.close()
     
     async def _send_ws_fast(self, command: Dict, timeout: int = 10) -> Dict:
-        """Invio WebSocket ultra-veloce"""
+        """Invio WebSocket ultra-veloce con filtro ID"""
         try:
-            async with self.session.ws_connect(self.ws_url) as ws:
-                await ws.send_str(json.dumps(command))
-                
-                try:
-                    async with asyncio.timeout(timeout):
-                        async for msg in ws:
-                            if msg.type == aiohttp.WSMsgType.TEXT:
-                                return json.loads(msg.data)
-                            break
-                except asyncio.TimeoutError:
-                    return {"status": "sent"}
+            # Assicura connessione
+            if not self._connected or self._ws is None or self._ws.closed:
+                await self.connect()
+
+            # Assicura ID univoco se non presente
+            if "id" not in command or command["id"] == "0":
+                msg_id = str(uuid.uuid4())
+                command["id"] = msg_id
+                if "hbus" in command:
+                    command["hbus"]["id"] = msg_id
+            else:
+                msg_id = command["id"]
+
+            await self._ws.send_str(json.dumps(command))
+            
+            try:
+                async with asyncio.timeout(timeout):
+                    async for msg in self._ws:
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            data = json.loads(msg.data)
+                            # Filtra per ID per evitare race condition con notifiche
+                            if str(data.get("id")) == str(msg_id):
+                                return data
+                            # Se è un errore o altro, continua ad ascoltare
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            return {"error": "WebSocket error"}
+                        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED):
+                            self._connected = False
+                            return {"error": "Connection closed"}
+            except asyncio.TimeoutError:
+                # Se timeout, assumiamo inviato ma nessuna risposta (fire and forget o slow)
+                return {"status": "sent", "warning": "timeout waiting response"}
                     
         except Exception as e:
+            self._connected = False
             return {"error": str(e)}
     
     async def start_activity_fast(self, activity_id: str) -> Dict:
@@ -232,7 +276,8 @@ async def main():
         
         try:
             # 🎵 AUDIO ONKYO (Priorità alta)
-            if cmd in AUDIO_COMMANDS:
+            # Verifica che 'onkyo' esista nei device prima di usarlo hardcoded
+            if cmd in AUDIO_COMMANDS and "onkyo" in DEVICES:
                 if args.verbose:
                     print(f"🎵 Invio comando audio: {AUDIO_COMMANDS[cmd]} → Onkyo (ID: {DEVICES['onkyo']['id']})")
                 
@@ -272,11 +317,11 @@ async def main():
                     print(f"❌ {result['error']}")
             
             # 🎵 AUDIO SPECIALI
-            elif cmd == "audio-on":
+            elif cmd == "audio-on" and "onkyo" in DEVICES:
                 result = await hub.send_device_fast(DEVICES["onkyo"]["id"], "PowerOn", use_press_release=use_pr)
                 print("🎵 Onkyo ON" if "error" not in result else f"❌ {result['error']}")
             
-            elif cmd == "audio-off":
+            elif cmd == "audio-off" and "onkyo" in DEVICES:
                 result = await hub.send_device_fast(DEVICES["onkyo"]["id"], "PowerOff", use_press_release=use_pr) 
                 print("🎵 Onkyo OFF" if "error" not in result else f"❌ {result['error']}")
             

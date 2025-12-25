@@ -1,14 +1,16 @@
-#!/home/marco/dev/harmony/harmony_env/bin/python
+#!/usr/bin/env python3
 """🌃 Harmony Hub - Modern Tokyo Night 2025"""
 
 import sys
-import subprocess
+import asyncio
 from pathlib import Path
 from PyQt6.QtWidgets import *
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QObject, pyqtSlot
 from PyQt6.QtGui import QFont, QColor, QIcon, QPainter, QPen
 
-HARMONY_CLI = Path(__file__).parent / "harmony.py"
+# Import diretto (assumendo che harmony.py sia nello stesso path)
+import harmony
+from harmony import FastHarmonyHub, DEVICES, ACTIVITIES, AUDIO_COMMANDS
 
 # 🎨 Palette Tokyo Night Modern (Minimal)
 C = {
@@ -90,21 +92,113 @@ STYLESHEET = f"""
     }}
 """
 
-class Worker(QThread):
-    done = pyqtSignal(str, str)
-    fail = pyqtSignal(str, str)
-    
-    def __init__(self, cmd):
+class HarmonyWorker(QThread):
+    """Worker persistente che mantiene la connessione WebSocket attiva"""
+    result_ready = pyqtSignal(str, object)
+    status_updated = pyqtSignal(str)
+
+    def __init__(self):
         super().__init__()
-        self.cmd = cmd
-    
+        self.loop = None
+        self.hub = None
+        self._cmd_queue = asyncio.Queue()
+        self._running = True
+
     def run(self):
+        """Esegue il loop asyncio in un thread separato"""
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        self.loop.run_until_complete(self._async_main())
+
+    async def _async_main(self):
+        self.hub = FastHarmonyHub()
         try:
-            r = subprocess.run([str(HARMONY_CLI)] + self.cmd.split(), 
-                             capture_output=True, text=True, timeout=10)
-            (self.done if r.returncode == 0 else self.fail).emit(self.cmd, r.stdout.strip() or r.stderr.strip())
+            await self.hub.connect()
+            
+            while self._running:
+                # Attende comandi dalla coda
+                try:
+                    cmd_data = await asyncio.wait_for(self._cmd_queue.get(), timeout=1.0)
+                    cmd_type, args = cmd_data
+                    
+                    if cmd_type == "stop":
+                        break
+                    elif cmd_type == "command":
+                        await self._handle_command(args)
+                    elif cmd_type == "status":
+                        await self._handle_status()
+                        
+                except asyncio.TimeoutError:
+                    # Keepalive / status update periodico se necessario
+                    pass
+                except Exception as e:
+                    print(f"Error in worker loop: {e}")
+
         except Exception as e:
-            self.fail.emit(self.cmd, str(e))
+            print(f"Connection error: {e}")
+        finally:
+            await self.hub.close()
+
+    async def _handle_command(self, args):
+        cmd, action = args
+        cmd = cmd.lower()
+        res = {"error": "Unknown command"}
+        
+        try:
+            # Logica duplicata da harmony.py main() ma adattata
+            # Verifica che 'onkyo' esista nei device prima di usarlo hardcoded
+            if cmd in AUDIO_COMMANDS and "onkyo" in DEVICES:
+                res = await self.hub.send_device_fast(DEVICES["onkyo"]["id"], AUDIO_COMMANDS[cmd])
+            elif cmd in DEVICES and action:
+                device = DEVICES[cmd]
+                res = await self.hub.send_device_fast(device["id"], action)
+            elif cmd in ACTIVITIES:
+                res = await self.hub.start_activity_fast(ACTIVITIES[cmd]["id"])
+            elif cmd == "audio-on" and "onkyo" in DEVICES:
+                res = await self.hub.send_device_fast(DEVICES["onkyo"]["id"], "PowerOn")
+            elif cmd == "audio-off" and "onkyo" in DEVICES:
+                res = await self.hub.send_device_fast(DEVICES["onkyo"]["id"], "PowerOff")
+            elif cmd == "off":
+                 # PowerOff activity is typically -1 or "PowerOff"
+                res = await self.hub.start_activity_fast("-1")
+
+            self.result_ready.emit(f"{cmd} {action or ''}", res)
+            
+        except Exception as e:
+            self.result_ready.emit(f"{cmd} {action or ''}", {"error": str(e)})
+
+    async def _handle_status(self):
+        try:
+            res = await self.hub.get_current_fast()
+            if "data" in res and "result" in res["data"]:
+                activity_id = res["data"]["result"]
+                status_text = "..."
+                if activity_id == "-1":
+                    status_text = "⚫ OFF"
+                else:
+                    for name, info in ACTIVITIES.items():
+                        if info["id"] == activity_id:
+                            status_text = f"🟢 {info['name']}"
+                            break
+                    else:
+                        status_text = f"🟡 ID: {activity_id}"
+                self.status_updated.emit(status_text)
+        except Exception as e:
+            self.status_updated.emit("❌ Error")
+
+    def queue_command(self, cmd, action=None):
+        if self.loop:
+            self.loop.call_soon_threadsafe(self._cmd_queue.put_nowait, ("command", (cmd, action)))
+
+    def queue_status(self):
+        if self.loop:
+             self.loop.call_soon_threadsafe(self._cmd_queue.put_nowait, ("status", None))
+
+    def stop(self):
+        self._running = False
+        if self.loop:
+            self.loop.call_soon_threadsafe(self._cmd_queue.put_nowait, ("stop", None))
+        self.wait()
 
 class ModernBtn(QPushButton):
     def __init__(self, text, cmd, icon=None, is_danger=False):
@@ -125,7 +219,11 @@ class ModernBtn(QPushButton):
 class GUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.w = None
+        self.worker = HarmonyWorker()
+        self.worker.result_ready.connect(self.on_done)
+        self.worker.status_updated.connect(self.on_status)
+        self.worker.start()
+
         self.setWindowTitle("Harmony")
         # Layout generoso e pulito
         self.setFixedWidth(540)
@@ -299,13 +397,20 @@ class GUI(QMainWindow):
         dev_layout.setSpacing(8)
         dev_layout.setContentsMargins(12, 12, 12, 12)
         
-        devices = [
-            ("Samsung TV", "samsung", [("⏻", "PowerToggle"), ("⚙️", "SmartHub")]),
-            ("NVIDIA Shield", "shield", [("🏠", "Home"), ("↩️", "Back")]),
-            ("Onkyo Audio", "onkyo", [("📺", "ListeningModeTvLogic"), ("🎵", "ModeMusic")])
-        ]
+        # Lista dispositivi generica se presente in config, altrimenti fallback parziale
+        # Usiamo DEVICES dal config se possibile per generare la lista
+        devices_to_show = []
+        if "samsung" in DEVICES:
+             devices_to_show.append(("Samsung TV", "samsung", [("⏻", "PowerToggle"), ("⚙️", "SmartHub")]))
+        if "shield" in DEVICES:
+             devices_to_show.append(("NVIDIA Shield", "shield", [("🏠", "Home"), ("↩️", "Back")]))
+        if "onkyo" in DEVICES:
+             devices_to_show.append(("Onkyo Audio", "onkyo", [("📺", "ListeningModeTvLogic"), ("🎵", "ModeMusic")]))
+             
+        # Se DEVICES ha altri dispositivi non mappati qui, potremmo aggiungerli genericamente,
+        # ma per ora manteniamo la UI pulita con quelli supportati specificamente se presenti.
         
-        for name, dev_code, actions in devices:
+        for name, dev_code, actions in devices_to_show:
             row = QHBoxLayout()
             lbl = QLabel(name)
             lbl.setStyleSheet(f"color: {C['subtext']}; font-weight: bold;")
@@ -341,50 +446,47 @@ class GUI(QMainWindow):
         layout.addWidget(lbl)
 
     def run(self, cmd):
-        if self.w and self.w.isRunning(): return
+        # Parsa il comando per separare azione se necessario
+        parts = cmd.split(maxsplit=1)
+        command = parts[0]
+        action = parts[1] if len(parts) > 1 else None
+        
         self.status.setText(f"🚀 {cmd}...")
         self.status.setStyleSheet(f"QLabel#Status {{ color: {C['active']}; border-color: {C['active']}; }}")
-        self.w = Worker(cmd)
-        self.w.done.connect(self.on_done)
-        self.w.fail.connect(self.on_fail)
-        self.w.start()
+        self.worker.queue_command(command, action)
     
     def on_done(self, cmd, res):
-        if cmd in ["off"]: self.status.setText("⚫ SPEGNIMENTO...")
-        else: QTimer.singleShot(500, self.update_status)
-    
-    def on_fail(self, cmd, err):
-        self.status.setText("❌ ERROR")
-        self.status.setStyleSheet(f"QLabel#Status {{ color: {C['danger']}; border-color: {C['danger']}; }}")
-        QTimer.singleShot(3000, self.update_status)
+        if "error" in res:
+             self.status.setText(f"❌ {res['error']}")
+             self.status.setStyleSheet(f"QLabel#Status {{ color: {C['danger']}; border-color: {C['danger']}; }}")
+             QTimer.singleShot(3000, self.update_status)
+        else:
+             if "off" in cmd: self.status.setText("⚫ SPEGNIMENTO...")
+             else: QTimer.singleShot(500, self.update_status)
     
     def update_status(self):
-        if self.w and self.w.isRunning(): return
-        self.w = Worker("status")
-        self.w.done.connect(self.on_status)
-        self.w.start()
+        self.worker.queue_status()
     
-    def on_status(self, cmd, res):
-        if "status" in res and "sent" in res: return
-        if "OFF" in res or "-1" in res: txt, col = "SYSTEM OFF", C['subtext']
-        elif "Guarda TV" in res: txt, col = "📺 TV MODE", C['active']
-        elif "musica" in res: txt, col = "🎵 MUSIC MODE", C['accent']
-        elif "Shield" in res: txt, col = "🎮 SHIELD", '#7dcfff'
-        elif "Condizionatore" in res or "Clima" in res: txt, col = "❄️ CLIMA", '#7dcfff'
+    def on_status(self, status_text):
+        if "OFF" in status_text or "-1" in status_text: txt, col = "SYSTEM OFF", C['subtext']
+        elif "Guarda TV" in status_text: txt, col = "📺 TV MODE", C['active']
+        elif "Music" in status_text: txt, col = "🎵 MUSIC MODE", C['accent']
+        elif "Shield" in status_text: txt, col = "🎮 SHIELD", '#7dcfff'
+        elif "Condizionatore" in status_text or "Clima" in status_text: txt, col = "❄️ CLIMA", '#7dcfff'
         else:
-            clean_res = res.replace("✅", "").strip()
-            if not clean_res: return
+            clean_res = status_text.replace("✅", "").strip()
             txt, col = clean_res, C['text']
+            
         self.status.setText(txt)
         self.status.setStyleSheet(f"QLabel#Status {{ color: {col}; border-color: {col}; }}")
+
+    def closeEvent(self, event):
+        self.worker.stop()
+        event.accept()
 
 def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLESHEET)
-    
-    if not HARMONY_CLI.exists():
-        QMessageBox.critical(None, "Errore", f"CLI non trovato: {HARMONY_CLI}")
-        sys.exit(1)
     
     w = GUI()
     w.show()
