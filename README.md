@@ -1,6 +1,7 @@
 # Logitech Harmony Hub Controller (CLI + GUI)
 
 > **Status**: Stable, Production Ready
+>
 > **Description**: High-performance, hybrid controller (CLI + GUI) for Logitech Harmony Hub featuring async WebSocket communication and a modern Qt6 interface.
 
 ![Harmony Controller](screenshot.png)
