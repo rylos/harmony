@@ -507,6 +507,7 @@ class GUI(QMainWindow):
             for icon, cmd in actions:
                 b = self.create_btn("", f"{dev_code} {cmd}", icon)
                 b.setFixedSize(38, 32)
+                b.setToolTip(cmd)
                 row.addWidget(b)
             
             dev_layout.addLayout(row)
