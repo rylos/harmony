@@ -1,4 +1,4 @@
-# Harmony Hub Controller (CLI + GUI)
+# Logitech Harmony Hub Controller (CLI + GUI)
 
 > **Status**: Stable, Production Ready
 > **Latest Update**: December 25, 2025
