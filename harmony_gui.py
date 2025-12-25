@@ -146,22 +146,28 @@ class HarmonyWorker(QThread):
         
         try:
             # Logica duplicata da harmony.py main() ma adattata
-            # Verifica che 'onkyo' esista nei device prima di usarlo hardcoded
-            if cmd in AUDIO_COMMANDS and "onkyo" in DEVICES:
+            # 1. ATTIVITÀ (Priorità Alta per catturare 'off')
+            if cmd in ACTIVITIES:
+                res = await self.hub.start_activity_fast(ACTIVITIES[cmd]["id"])
+            
+            # 2. AUDIO ONKYO
+            elif cmd in AUDIO_COMMANDS and "onkyo" in DEVICES:
                 res = await self.hub.send_device_fast(DEVICES["onkyo"]["id"], AUDIO_COMMANDS[cmd])
+            
+            # 3. DISPOSITIVI
             elif cmd in DEVICES and action:
                 device = DEVICES[cmd]
                 res = await self.hub.send_device_fast(device["id"], action)
-            elif cmd in ACTIVITIES:
-                res = await self.hub.start_activity_fast(ACTIVITIES[cmd]["id"])
+                
             elif cmd == "audio-on" and "onkyo" in DEVICES:
                 res = await self.hub.send_device_fast(DEVICES["onkyo"]["id"], "PowerOn")
             elif cmd == "audio-off" and "onkyo" in DEVICES:
                 res = await self.hub.send_device_fast(DEVICES["onkyo"]["id"], "PowerOff")
+            
+            # Fallback per 'off' se non definito in ACTIVITIES ma richiesto esplicitamente come attività di sistema
             elif cmd == "off":
-                 # PowerOff activity: Get ID from config or default to -1
-                off_id = ACTIVITIES.get("off", {}).get("id", "-1")
-                res = await self.hub.start_activity_fast(off_id)
+                 # PowerOff activity is typically -1
+                res = await self.hub.start_activity_fast("-1")
 
             self.result_ready.emit(f"{cmd} {action or ''}", res)
             

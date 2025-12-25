@@ -275,22 +275,20 @@ async def main():
         use_pr = not args.no_press_release  # Press/Release abilitato di default
         
         try:
-            # 🎵 AUDIO ONKYO (Priorità alta)
-            # Verifica che 'onkyo' esista nei device prima di usarlo hardcoded
-            if cmd in AUDIO_COMMANDS and "onkyo" in DEVICES:
+            # 🎯 ATTIVITÀ (Priorità su tutto: se scrivo 'off' voglio spegnere il sistema)
+            if cmd in ACTIVITIES:
+                activity = ACTIVITIES[cmd]
                 if args.verbose:
-                    print(f"🎵 Invio comando audio: {AUDIO_COMMANDS[cmd]} → Onkyo (ID: {DEVICES['onkyo']['id']})")
-                
-                result = await hub.send_device_fast(DEVICES["onkyo"]["id"], AUDIO_COMMANDS[cmd], use_press_release=use_pr)
-                
+                    print(f"🚀 Avvio attività: {activity['name']} (ID: {activity['id']})")
+                result = await hub.start_activity_fast(activity["id"])
                 if "error" not in result:
-                    print(f"🎵 {AUDIO_COMMANDS[cmd]}")
+                    print(f"✅ {activity['name']}")
                     if args.verbose:
                         print(f"📊 Risultato: {result}")
                 else:
                     print(f"❌ {result['error']}")
 
-            # 📱 DISPOSITIVI (Se c'è un'azione specifica, hanno priorità sulle attività)
+            # 📱 DISPOSITIVI (Specific action overrides generic audio commands but not activities without action)
             elif cmd in DEVICES and args.action:
                 device = DEVICES[cmd]
                 
@@ -303,14 +301,16 @@ async def main():
                 else:
                     print(f"❌ {result['error']}")
 
-            # 🎯 ATTIVITÀ (Solo se non è un comando dispositivo o audio)
-            elif cmd in ACTIVITIES:
-                activity = ACTIVITIES[cmd]
+            # 🎵 AUDIO ONKYO
+            # Verifica che 'onkyo' esista nei device prima di usarlo hardcoded
+            elif cmd in AUDIO_COMMANDS and "onkyo" in DEVICES:
                 if args.verbose:
-                    print(f"🚀 Avvio attività: {activity['name']} (ID: {activity['id']})")
-                result = await hub.start_activity_fast(activity["id"])
+                    print(f"🎵 Invio comando audio: {AUDIO_COMMANDS[cmd]} → Onkyo (ID: {DEVICES['onkyo']['id']})")
+                
+                result = await hub.send_device_fast(DEVICES["onkyo"]["id"], AUDIO_COMMANDS[cmd], use_press_release=use_pr)
+                
                 if "error" not in result:
-                    print(f"✅ {activity['name']}")
+                    print(f"🎵 {AUDIO_COMMANDS[cmd]}")
                     if args.verbose:
                         print(f"📊 Risultato: {result}")
                 else:
