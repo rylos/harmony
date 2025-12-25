@@ -40,7 +40,8 @@ STYLESHEET = f"""
         font-size: 11px;
         text-transform: uppercase;
         padding-left: 2px;
-        margin-top: 8px;
+        margin-top: 0px;
+        margin-bottom: 0px;
     }}
 
     QFrame#Card {{
@@ -72,11 +73,18 @@ STYLESHEET = f"""
     }}
 
     QPushButton#PowerOff {{
+        background-color: {C['surface']};
         color: {C['danger']};
-        border-color: {C['danger']}40;
+        border: 1px solid {C['danger']}40;
+        outline: none;
     }}
     QPushButton#PowerOff:hover {{
         background-color: {C['danger']};
+        color: {C['bg']};
+        border-color: {C['danger']};
+    }}
+    QPushButton#PowerOff:pressed {{
+        background-color: {C['danger']}cc;
         color: {C['bg']};
         border-color: {C['danger']};
     }}
@@ -145,9 +153,44 @@ class HarmonyWorker(QThread):
         res = {"error": "Unknown command"}
         
         try:
+            # 0. SMART COMMANDS (Routing dinamico basato sull'attività)
+            if cmd.startswith("smart_"):
+                real_cmd = cmd.replace("smart_", "")
+                # Recupera attività corrente
+                curr = await self.hub.get_current_fast()
+                act_id = "-1"
+                if "data" in curr and "result" in curr["data"]:
+                    act_id = curr["data"]["result"]
+                
+                # Determina il target device in base all'attività
+                target_dev = None
+                
+                # Mappa ID Attività -> Device ID
+                # (Recupera gli ID dal config ACTIVITIES e DEVICES)
+                tv_act_id = ACTIVITIES.get("tv", {}).get("id")
+                shield_act_id = ACTIVITIES.get("shield", {}).get("id")
+                music_act_id = ACTIVITIES.get("music", {}).get("id")
+                
+                if act_id == tv_act_id and "samsung" in DEVICES:
+                    target_dev = DEVICES["samsung"]["id"]
+                elif act_id == shield_act_id and "shield" in DEVICES:
+                    target_dev = DEVICES["shield"]["id"]
+                elif act_id == music_act_id and "onkyo" in DEVICES:
+                    target_dev = DEVICES["onkyo"]["id"]
+                # Fallback: se siamo in Watch TV o indefinito, prova Samsung se comando compatibile
+                elif "samsung" in DEVICES:
+                     target_dev = DEVICES["samsung"]["id"]
+
+                if target_dev:
+                    # Mappature comandi specifici per device se necessario (es. "Select" vs "OK")
+                    # Per ora assumiamo che Harmony usi nomi standard (DirectionUp, Select, ecc.)
+                    res = await self.hub.send_device_fast(target_dev, action)
+                else:
+                    res = {"error": "No target device for smart command"}
+
             # Logica duplicata da harmony.py main() ma adattata
             # 1. ATTIVITÀ (Priorità Alta per catturare 'off')
-            if cmd in ACTIVITIES:
+            elif cmd in ACTIVITIES:
                 res = await self.hub.start_activity_fast(ACTIVITIES[cmd]["id"])
             
             # 2. AUDIO ONKYO
@@ -233,14 +276,14 @@ class GUI(QMainWindow):
 
         self.setWindowTitle("Harmony")
         # Layout generoso e pulito
-        self.setFixedWidth(540)
+        self.setFixedWidth(420)
         # Altezza minima garantita per evitare schiacciamenti
-        self.setMinimumHeight(800)
+        # self.setMinimumHeight(600)  <-- RIMOSSO (lasciamo auto-size)
         
         c = QWidget()
         self.setCentralWidget(c)
         main_layout = QVBoxLayout(c)
-        main_layout.setSpacing(16)
+        main_layout.setSpacing(6)
         main_layout.setContentsMargins(16, 16, 16, 16)
         
         # 1. Header & Status
@@ -293,52 +336,65 @@ class GUI(QMainWindow):
         remote_frame = QFrame()
         remote_frame.setObjectName("Card")
         remote_layout = QHBoxLayout(remote_frame)
-        remote_layout.setSpacing(24) 
-        remote_layout.setContentsMargins(20, 20, 20, 20)
+        remote_layout.setSpacing(16) 
+        remote_layout.setContentsMargins(12, 12, 12, 12)
         
-        # --- LEFT: SHIELD ---
-        shield_col = QVBoxLayout()
-        shield_col.setSpacing(16)
+        # --- LEFT: SMART D-PAD & NAV ---
+        smart_col = QVBoxLayout()
+        smart_col.setSpacing(8) # Ridotto da 10
         
-        lbl_shield = QLabel("SHIELD")
-        lbl_shield.setStyleSheet(f"color: {C['active']}; font-weight: bold; font-size: 10px;")
-        lbl_shield.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        shield_col.addWidget(lbl_shield)
+        lbl_smart = QLabel("NAVIGATION (Auto)")
+        lbl_smart.setStyleSheet(f"color: {C['active']}; font-weight: bold; font-size: 10px;")
+        lbl_smart.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        smart_col.addWidget(lbl_smart)
         
         # D-Pad
         dpad = QGridLayout()
         dpad.setSpacing(8)
         
-        s_up = self.create_btn("", "shield DirectionUp", "▴")
-        s_down = self.create_btn("", "shield DirectionDown", "▾")
-        s_left = self.create_btn("", "shield DirectionLeft", "◂")
-        s_right = self.create_btn("", "shield DirectionRight", "▸")
-        s_ok = self.create_btn("OK", "shield Select", "")
+        # Smart commands: "smart_ " + action
+        d_up = self.create_btn("", "smart_ DirectionUp", "▴")
+        d_down = self.create_btn("", "smart_ DirectionDown", "▾")
+        d_left = self.create_btn("", "smart_ DirectionLeft", "◂")
+        d_right = self.create_btn("", "smart_ DirectionRight", "▸")
+        d_ok = self.create_btn("OK", "smart_ Select", "")
         
-        for b in [s_up, s_down, s_left, s_right, s_ok]:
-            b.setFixedSize(36, 36)
-            if b != s_ok: b.setStyleSheet(b.styleSheet() + "font-size: 16px;")
-            else: b.setStyleSheet(b.styleSheet() + f"background: {C['active']}; color: {C['bg']}; font-weight: bold; font-size: 11px;")
+        for b in [d_up, d_down, d_left, d_right, d_ok]:
+            b.setFixedSize(40, 40)
+            if b != d_ok: b.setStyleSheet(b.styleSheet() + "font-size: 18px;")
+            else: b.setStyleSheet(b.styleSheet() + f"background: {C['active']}; color: {C['bg']}; font-weight: bold; font-size: 12px;")
 
-        dpad.addWidget(s_up, 0, 1)
-        dpad.addWidget(s_left, 1, 0)
-        dpad.addWidget(s_ok, 1, 1)
-        dpad.addWidget(s_right, 1, 2)
-        dpad.addWidget(s_down, 2, 1)
+        dpad.addWidget(d_up, 0, 1)
+        dpad.addWidget(d_left, 1, 0)
+        dpad.addWidget(d_ok, 1, 1)
+        dpad.addWidget(d_right, 1, 2)
+        dpad.addWidget(d_down, 2, 1)
         
-        shield_col.addLayout(dpad)
+        smart_col.addLayout(dpad)
         
-        # Shield Actions
-        s_acts = QHBoxLayout()
-        s_acts.setSpacing(8)
-        for txt, cmd, icon in [("🏠", "shield Home", None), ("↩️", "shield Back", None), ("⏯", "shield Play", None), ("⏹", "shield Stop", None)]:
-            b = self.create_btn(txt, cmd, icon)
-            b.setFixedSize(36, 32)
-            s_acts.addWidget(b)
-        shield_col.addLayout(s_acts)
-        shield_col.addStretch()
+        # Smart Nav Actions (Home, Back, Menu, Exit)
+        nav_acts = QGridLayout()
+        nav_acts.setSpacing(8)
         
-        remote_layout.addLayout(shield_col)
+        # Questi potrebbero essere smart o fissi. Home/Back spesso variano.
+        # Usiamo smart per coerenza
+        n_home = self.create_btn("Home", "smart_ Home", "🏠")
+        n_back = self.create_btn("Back", "smart_ Return", "↩️") # Return/Back (Harmony often uses Return or Back)
+        n_menu = self.create_btn("Menu", "smart_ Menu", "☰")
+        n_exit = self.create_btn("Exit", "smart_ Exit", "✖️")
+        
+        for b in [n_home, n_back, n_menu, n_exit]:
+            b.setFixedSize(70, 36)
+            
+        nav_acts.addWidget(n_menu, 0, 0)
+        nav_acts.addWidget(n_home, 0, 1)
+        nav_acts.addWidget(n_back, 1, 0)
+        nav_acts.addWidget(n_exit, 1, 1)
+        
+        smart_col.addLayout(nav_acts)
+        smart_col.addStretch()
+        
+        remote_layout.addLayout(smart_col)
         
         # Separator
         line = QFrame()
@@ -347,37 +403,58 @@ class GUI(QMainWindow):
         line.setStyleSheet(f"background: {C['border']}; width: 1px;")
         remote_layout.addWidget(line)
 
-        # --- RIGHT: TV NUMPAD ---
+        # --- RIGHT: TV NUMPAD & EXTRA ---
         tv_col = QVBoxLayout()
-        tv_col.setSpacing(16)
+        tv_col.setSpacing(8) # Ridotto da 10
         
-        lbl_tv = QLabel("TV NUMPAD")
+        lbl_tv = QLabel("TV CONTROLS")
         lbl_tv.setStyleSheet(f"color: {C['active']}; font-weight: bold; font-size: 10px;")
         lbl_tv.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tv_col.addWidget(lbl_tv)
         
         numpad = QGridLayout()
-        numpad.setSpacing(8)
+        numpad.setSpacing(10) # Aumentato spaziatura verticale/orizzontale
         
+        # 1-9
         for i in range(1, 10):
             b = self.create_btn(str(i), f"samsung {i}")
-            b.setFixedSize(36, 36)
+            b.setFixedSize(56, 36)
             numpad.addWidget(b, (i-1)//3, (i-1)%3)
             
+        # 0 & others
+        b_list = self.create_btn("List", "samsung List", "📑")
         b_0 = self.create_btn("0", "samsung 0")
-        b_0.setFixedSize(36, 36)
+        
+        for b in [b_list, b_0]: b.setFixedSize(56, 36)
+        
+        numpad.addWidget(b_list, 3, 0)
         numpad.addWidget(b_0, 3, 1)
-        
-        b_ok = self.create_btn("OK", "samsung Select")
-        b_ok.setFixedSize(36, 36)
-        b_ok.setStyleSheet(b_ok.styleSheet() + f"border-color: {C['active']}; color: {C['active']}; font-size: 11px;")
-        numpad.addWidget(b_ok, 3, 2)
-        
-        b_info = self.create_btn("ℹ️", "samsung Info")
-        b_info.setFixedSize(36, 36)
-        numpad.addWidget(b_info, 3, 0)
+        # PrevChannel rimosso
         
         tv_col.addLayout(numpad)
+        
+        # Color Keys & Info
+        colors = QHBoxLayout()
+        colors.setSpacing(6)
+        for col, cmd in [("#f7768e", "Red"), ("#9ece6a", "Green"), ("#e0af68", "Yellow"), ("#7aa2f7", "Blue")]:
+            b = self.create_btn("", f"samsung {cmd}")
+            b.setFixedSize(24, 24)
+            b.setStyleSheet(f"background-color: {col}; border: none; border-radius: 12px;")
+            colors.addWidget(b)
+            
+        tv_col.addLayout(colors)
+        
+        # Extra TV
+        extra_tv = QHBoxLayout()
+        b_info = self.create_btn("Info", "samsung Info")
+        b_guide = self.create_btn("Guide", "samsung Guide")
+        b_hub = self.create_btn("Hub", "samsung SmartHub")
+        
+        for b in [b_info, b_guide, b_hub]: 
+            b.setFixedHeight(30)
+            extra_tv.addWidget(b)
+            
+        tv_col.addLayout(extra_tv)
         tv_col.addStretch()
         
         remote_layout.addLayout(tv_col)
