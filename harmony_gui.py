@@ -573,9 +573,16 @@ class GUI(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    # Fix per icona KDE/Wayland/X11
+    app.setDesktopFileName("harmony-hub-controller.desktop") 
     app.setStyleSheet(STYLESHEET)
     
+    # Imposta icona applicazione e finestra
+    icon_path = str(Path(__file__).parent / "harmony-icon.png")
+    app.setWindowIcon(QIcon(icon_path))
+    
     w = GUI()
+    w.setWindowIcon(QIcon(icon_path))
     w.show()
     sys.exit(app.exec())
 
