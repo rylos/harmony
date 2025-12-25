@@ -159,8 +159,9 @@ class HarmonyWorker(QThread):
             elif cmd == "audio-off" and "onkyo" in DEVICES:
                 res = await self.hub.send_device_fast(DEVICES["onkyo"]["id"], "PowerOff")
             elif cmd == "off":
-                 # PowerOff activity is typically -1 or "PowerOff"
-                res = await self.hub.start_activity_fast("-1")
+                 # PowerOff activity: Get ID from config or default to -1
+                off_id = ACTIVITIES.get("off", {}).get("id", "-1")
+                res = await self.hub.start_activity_fast(off_id)
 
             self.result_ready.emit(f"{cmd} {action or ''}", res)
             
@@ -250,6 +251,12 @@ class GUI(QMainWindow):
         
         status_layout.addWidget(title)
         status_layout.addWidget(self.status)
+        
+        # Power Off Button (Moved here for quick access)
+        self.btn_off = self.create_btn("SPEGNI TUTTO", "off", "⏻", is_danger=True)
+        self.btn_off.setFixedHeight(40)
+        status_layout.addWidget(self.btn_off)
+        
         main_layout.addLayout(status_layout)
         
         # 2. Activities Grid
@@ -382,9 +389,6 @@ class GUI(QMainWindow):
         ctrl_layout.addWidget(self.create_btn("", "vol-", "➖"), 0, 0)
         ctrl_layout.addWidget(self.create_btn("Mute", "mute", "🔇"), 0, 1)
         ctrl_layout.addWidget(self.create_btn("", "vol+", "➕"), 0, 2)
-        
-        btn_off = self.create_btn("Spegni Tutto", "off", "⏻", is_danger=True)
-        ctrl_layout.addWidget(btn_off, 1, 0, 1, 3)
         
         main_layout.addWidget(ctrl_frame)
 
