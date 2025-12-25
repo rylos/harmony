@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+harmony_env/
+
+# Configuration (Sensitive)
+config.py
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project Specific
+*.bak
+*.log
+.amazonq/
+.subagents/
+tmp/

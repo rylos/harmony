@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Harmony Hub Controller
+Comment=Controllo Logitech Harmony Hub - Tokyo Night
+Exec=/home/marco/dev/harmony/start_harmony_gui.sh
+Icon=/home/marco/dev/harmony/harmony-icon.png
+Terminal=false
+Categories=AudioVideo;Audio;Video;Player;Qt;
+Keywords=harmony;hub;remote;control;tv;audio;
+StartupNotify=true
+X-KDE-StartupNotify=true
