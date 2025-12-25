@@ -162,12 +162,6 @@ class HarmonyWorker(QThread):
                  # PowerOff activity: Get ID from config or default to -1
                 off_id = ACTIVITIES.get("off", {}).get("id", "-1")
                 res = await self.hub.start_activity_fast(off_id)
-                
-                # FORCE TV POWER OFF
-                # Fix per desincronizzazione: invia esplicitamente PowerOff alla TV
-                if "samsung" in DEVICES:
-                     await asyncio.sleep(0.5)
-                     await self.hub.send_device_fast(DEVICES["samsung"]["id"], "PowerOff")
 
             self.result_ready.emit(f"{cmd} {action or ''}", res)
             
