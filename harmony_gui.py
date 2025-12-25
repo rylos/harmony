@@ -75,18 +75,22 @@ STYLESHEET = f"""
     QPushButton#PowerOff {{
         background-color: {C['surface']};
         color: {C['danger']};
-        border: 1px solid {C['danger']}40;
+        border: 1px solid transparent;
         outline: none;
     }}
     QPushButton#PowerOff:hover {{
-        background-color: {C['danger']};
-        color: {C['bg']};
-        border-color: {C['danger']};
+        background-color: {C['border']};
+        border: 1px solid {C['active']};
+        color: #ffffff;
     }}
     QPushButton#PowerOff:pressed {{
         background-color: {C['danger']}cc;
         color: {C['bg']};
-        border-color: {C['danger']};
+    }}
+    QPushButton#PowerOff:disabled {{
+        color: {C['subtext']};
+        background-color: {C['bg']};
+        border-color: {C['border']};
     }}
 
     QLabel#Status {{
@@ -301,7 +305,7 @@ class GUI(QMainWindow):
         status_layout.addWidget(title)
         status_layout.addWidget(self.status)
         
-        # Power Off Button (Moved here for quick access)
+        # Power Off Button
         self.btn_off = self.create_btn("SPEGNI TUTTO", "off", "⏻", is_danger=True)
         self.btn_off.setFixedHeight(40)
         status_layout.addWidget(self.btn_off)
@@ -556,7 +560,10 @@ class GUI(QMainWindow):
         self.worker.queue_status()
     
     def on_status(self, status_text):
-        if "OFF" in status_text or "-1" in status_text: txt, col = "SYSTEM OFF", C['subtext']
+        is_off = "OFF" in status_text or "-1" in status_text
+        self.btn_off.setDisabled(is_off)
+        
+        if is_off: txt, col = "SYSTEM OFF", C['subtext']
         elif "Guarda TV" in status_text: txt, col = "📺 TV MODE", C['active']
         elif "Music" in status_text: txt, col = "🎵 MUSIC MODE", C['accent']
         elif "Shield" in status_text: txt, col = "🎮 SHIELD", '#7dcfff'
