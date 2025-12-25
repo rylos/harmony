@@ -72,26 +72,7 @@ STYLESHEET = f"""
         color: {C['bg']};
     }}
 
-    QPushButton#PowerOff {{
-        background-color: {C['surface']};
-        color: {C['danger']};
-        border: 1px solid transparent;
-        outline: none;
-    }}
-    QPushButton#PowerOff:hover {{
-        background-color: {C['border']};
-        border: 1px solid {C['active']};
-        color: #ffffff;
-    }}
-    QPushButton#PowerOff:pressed {{
-        background-color: {C['danger']}cc;
-        color: {C['bg']};
-    }}
-    QPushButton#PowerOff:disabled {{
-        color: {C['subtext']};
-        background-color: {C['bg']};
-        border-color: {C['border']};
-    }}
+
 
     QLabel#Status {{
         background-color: {C['surface']};
@@ -255,7 +236,7 @@ class HarmonyWorker(QThread):
         self.wait()
 
 class ModernBtn(QPushButton):
-    def __init__(self, text, cmd, icon=None, is_danger=False):
+    def __init__(self, text, cmd, icon=None):
         super().__init__()
         if icon:
             self.setText(f"{icon}  {text}" if text else icon)
@@ -265,9 +246,6 @@ class ModernBtn(QPushButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMinimumHeight(36)
         
-        if is_danger:
-            self.setObjectName("PowerOff")
-            
         self.cmd = cmd
 
 class GUI(QMainWindow):
@@ -306,8 +284,21 @@ class GUI(QMainWindow):
         status_layout.addWidget(self.status)
         
         # Power Off Button
-        self.btn_off = self.create_btn("SPEGNI TUTTO", "off", "⏻", is_danger=True)
+        self.btn_off = self.create_btn("SPEGNI TUTTO", "off", "⏻")
         self.btn_off.setFixedHeight(40)
+        # Usa QFont per colorare solo l'icona tramite stylesheet mirato
+        self.btn_off.setStyleSheet(f"""
+            QPushButton {{
+                color: {C['danger']};
+            }}
+            QPushButton:hover {{
+                color: {C['text']};
+            }}
+            QPushButton:disabled {{
+                color: {C['subtext']};
+                background-color: {C['bg']};
+            }}
+        """)
         status_layout.addWidget(self.btn_off)
         
         main_layout.addLayout(status_layout)
@@ -525,9 +516,9 @@ class GUI(QMainWindow):
         self.timer.start(10000)
         self.adjustSize()
 
-    def create_btn(self, text, cmd, icon=None, is_danger=False):
+    def create_btn(self, text, cmd, icon=None):
         """Helper per creare bottoni già connessi"""
-        b = ModernBtn(text, cmd, icon, is_danger)
+        b = ModernBtn(text, cmd, icon)
         # IMPORTANTE: usa lambda con default arg c=cmd per catturare il valore corrente!
         b.clicked.connect(lambda _, c=cmd: self.run(c))
         return b
