@@ -1,11 +1,21 @@
-# 🌃 Harmony Hub Controller - Tokyo Night Edition (v2.1)
+# Harmony Hub Controller (CLI + GUI)
 
 > **Status**: Stable, Production Ready
 > **Latest Update**: December 25, 2025
 > **Version**: 2.1 (Stop button added, Layout fix, CLI Smart Logic)
 
 ## 📋 Overview
-A hybrid controller (CLI + GUI) for Logitech Harmony Hub, written in Python. This project focuses on "Ultra-Fast" execution speed and a modern, minimal aesthetic ("Tokyo Night 2025").
+A fast, hybrid controller (CLI + GUI) designed for the [Logitech Harmony Hub](https://support.myharmony.com/it-it/hub).
+This project provides an ultra-fast Python interface to control your home automation and entertainment devices directly from your Linux desktop.
+
+### 🔌 Compatible Hardware
+This controller works with any **Logitech Harmony Hub** based system, including:
+- **Harmony Elite**
+- **Harmony Companion**
+- **Harmony Smart Control**
+- **Harmony Ultimate Home**
+- **Harmony Pro**
+- **Harmony Hub** (Standalone)
 
 ### 🏗 Architecture
 The system is divided into two layers:
@@ -43,7 +53,7 @@ The system is divided into two layers:
 
 ## 🎨 Design System (Tokyo Night Modern)
 
-The file `harmony_gui.py` uses a dictionary `C` to centralize colors.
+The GUI implements the "Tokyo Night" aesthetic for a modern look. The file `harmony_gui.py` uses a dictionary `C` to centralize colors.
 
 ```python
 C = {
