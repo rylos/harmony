@@ -1,8 +1,7 @@
 # Logitech Harmony Hub Controller (CLI + GUI)
 
 > **Status**: Stable, Production Ready
-> **Latest Update**: December 25, 2025
-> **Version**: 2.1 (Stop button added, Layout fix, CLI Smart Logic)
+> **Description**: High-performance, hybrid controller (CLI + GUI) for Logitech Harmony Hub featuring async WebSocket communication and a modern Qt6 interface.
 
 ## 📋 Overview
 A fast, hybrid controller (CLI + GUI) designed for the [Logitech Harmony Hub](https://support.myharmony.com/it-it/hub).
