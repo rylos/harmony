@@ -510,6 +510,7 @@ class GUI(QMainWindow):
         main_layout.addWidget(dev_frame)
         
         # Init
+        self._updating_activity = False  # Flag per bloccare update durante avvio
         self.update_status()
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_status)
@@ -544,11 +545,30 @@ class GUI(QMainWindow):
              self.status.setStyleSheet(f"QLabel#Status {{ color: {C['danger']}; border-color: {C['danger']}; }}")
              QTimer.singleShot(3000, self.update_status)
         else:
-             if "off" in cmd: self.status.setText("⚫ SPEGNIMENTO...")
-             else: QTimer.singleShot(500, self.update_status)
+             # Mostra stato intermedio prima di aggiornare
+             if "off" in cmd:
+                 self.status.setText("⚫ SPEGNIMENTO...")
+                 self._updating_activity = True
+                 QTimer.singleShot(2000, self._finish_activity_update)
+             else:
+                 # Trova nome attività
+                 activity_name = cmd.upper()
+                 for name, info in ACTIVITIES.items():
+                     if name in cmd.lower():
+                         activity_name = info['name'].upper()
+                         break
+                 self.status.setText(f"🚀 AVVIO {activity_name}...")
+                 self._updating_activity = True
+                 QTimer.singleShot(10000, self._finish_activity_update)
+             self.status.setStyleSheet(f"QLabel#Status {{ color: {C['active']}; border-color: {C['active']}; }}")
+    
+    def _finish_activity_update(self):
+        self._updating_activity = False
+        self.update_status()
     
     def update_status(self):
-        self.worker.queue_status()
+        if not self._updating_activity:
+            self.worker.queue_status()
     
     def on_status(self, status_text):
         is_off = "OFF" in status_text or "-1" in status_text
