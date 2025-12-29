@@ -20,6 +20,10 @@ config.py
 *.swp
 *.swo
 
+# Testing
+.hypothesis/
+.pytest_cache/
+
 # Project Specific
 *.bak
 *.log
