@@ -1160,23 +1160,15 @@ class GUI(QMainWindow):
 
     def create_tv_command(self, action):
         """Create TV command using dynamic device resolution"""
-        try:
-            from tv_device_utils import create_tv_command
-            return create_tv_command(action)
-        except ImportError:
-            # Fallback if tv_device_utils is not available
-            print("Warning: tv_device_utils not available, TV commands may not work")
-            return None
+        tv_alias, tv_device = find_tv_device()
+        if tv_device:
+            return f"{tv_alias} {action}"
+        return None
 
     def is_tv_device_available(self):
         """Check if TV device is available in configuration"""
-        try:
-            from tv_device_utils import is_tv_device_available
-            return is_tv_device_available()
-        except ImportError:
-            # Fallback if tv_device_utils is not available
-            print("Warning: tv_device_utils not available, assuming TV not available")
-            return False
+        tv_alias, tv_device = find_tv_device()
+        return tv_device is not None
 
     def get_tv_unavailable_message(self):
         """Get appropriate message when TV device is unavailable"""
@@ -1239,13 +1231,9 @@ class GUI(QMainWindow):
 
     def _is_tv_command(self, command, action):
         """Check if a command is a TV-specific command"""
-        try:
-            from tv_device_utils import get_tv_device_alias
-            tv_alias = get_tv_device_alias()
-            if tv_alias and command == tv_alias:
-                return True
-        except ImportError:
-            pass
+        tv_alias, tv_device = find_tv_device()
+        if tv_alias and command == tv_alias:
+            return True
         
         # Also check for common TV command patterns
         tv_actions = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 
@@ -1273,16 +1261,11 @@ class GUI(QMainWindow):
         if not cmd:
             return False
             
-        try:
-            from tv_device_utils import get_tv_device_alias
-            tv_alias = get_tv_device_alias()
-            
-            # Check if command starts with TV device alias
-            if tv_alias and cmd.startswith(tv_alias):
-                return True
-                
-        except ImportError:
-            pass
+        tv_alias, tv_device = find_tv_device()
+        
+        # Check if command starts with TV device alias
+        if tv_alias and cmd.startswith(tv_alias):
+            return True
         
         # Fallback: check for common TV command patterns
         parts = cmd.split(maxsplit=1)
@@ -1308,16 +1291,11 @@ class GUI(QMainWindow):
             
         Requirements: 3.1, 3.2 (TV command feedback identification)
         """
-        try:
-            from tv_device_utils import get_tv_device_alias
-            tv_alias = get_tv_device_alias()
-            
-            # Check if command matches TV device alias
-            if tv_alias and command == tv_alias:
-                return True
-                
-        except ImportError:
-            pass
+        tv_alias, tv_device = find_tv_device()
+        
+        # Check if command matches TV device alias
+        if tv_alias and command == tv_alias:
+            return True
         
         # Fallback: check for common TV command patterns
         if action:
