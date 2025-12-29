@@ -11,7 +11,8 @@ import argparse
 import sys
 import uuid
 import random
-from typing import Dict
+import functools
+from typing import Dict, Callable, Any
 
 try:
     import config
@@ -19,6 +20,81 @@ except ImportError:
     print("❌ Configuration file 'config.py' not found.")
     print("   Please copy 'config.sample.py' to 'config.py' and configure your Hub details.")
     sys.exit(1)
+
+# Network retry mechanism with exponential backoff
+def network_retry(max_attempts: int = 3, base_delay: float = 0.5, max_delay: float = 5.0):
+    """
+    Decorator for network operations with exponential backoff retry logic.
+    
+    Args:
+        max_attempts: Maximum number of retry attempts (default: 3)
+        base_delay: Base delay in seconds for exponential backoff (default: 0.5)
+        max_delay: Maximum delay in seconds between retries (default: 5.0)
+    
+    Returns:
+        Decorated function with retry logic
+    """
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs) -> Any:
+            last_exception = None
+            
+            for attempt in range(max_attempts):
+                try:
+                    return await func(*args, **kwargs)
+                except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError, OSError) as e:
+                    last_exception = e
+                    
+                    # Don't retry on the last attempt
+                    if attempt == max_attempts - 1:
+                        break
+                    
+                    # Calculate exponential backoff delay
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    
+                    # Add some jitter to prevent thundering herd
+                    jitter = random.uniform(0, 0.1 * delay)
+                    total_delay = delay + jitter
+                    
+                    # Log retry attempt (if verbose logging is available)
+                    if args and hasattr(args[0], '_verbose_logging') and args[0]._verbose_logging:
+                        print(f"🔄 Network error on attempt {attempt + 1}/{max_attempts}, retrying in {total_delay:.2f}s: {e}")
+                    
+                    await asyncio.sleep(total_delay)
+                except Exception as e:
+                    # For non-network errors, don't retry
+                    raise e
+            
+            # If we get here, all retry attempts failed
+            raise last_exception
+        
+        return wrapper
+    return decorator
+
+# 🔧 Device Helper Functions for flexible device detection
+def find_device_by_type(device_type_keywords):
+    """Find device by type keywords (case insensitive)"""
+    for alias, device_info in DEVICES.items():
+        device_name = device_info.get('name', '').lower()
+        for keyword in device_type_keywords:
+            if keyword.lower() in device_name:
+                return alias, device_info
+    return None, None
+
+def find_audio_device():
+    """Find the primary audio device (receiver, amplifier, etc.)"""
+    audio_keywords = ['receiver', 'amplifier', 'amp', 'audio', 'stereo', 'soundbar', 'onkyo']
+    return find_device_by_type(audio_keywords)
+
+def find_tv_device():
+    """Find the primary TV device"""
+    tv_keywords = ['tv', 'television', 'samsung', 'lg', 'sony']
+    return find_device_by_type(tv_keywords)
+
+def find_shield_device():
+    """Find NVIDIA Shield or similar streaming device"""
+    shield_keywords = ['shield', 'nvidia', 'streaming']
+    return find_device_by_type(shield_keywords)
 
 # 🔧 CONFIGURATION (Loaded from config.py)
 HUB_IP = config.HUB_IP
@@ -28,15 +104,17 @@ DEVICES = config.DEVICES
 AUDIO_COMMANDS = config.AUDIO_COMMANDS
 
 class FastHarmonyHub:
-    def __init__(self):
+    def __init__(self, verbose_logging: bool = False):
         self.base_url = f"http://{HUB_IP}:8088"
         self.ws_url = f"{self.base_url}/?domain=svcs.myharmony.com&hubId={REMOTE_ID}"
         self.session = None
         self._connected = False
         self._ws = None
+        self._verbose_logging = verbose_logging
 
+    @network_retry(max_attempts=3, base_delay=0.5, max_delay=5.0)
     async def connect(self):
-        """Connessione persistente"""
+        """Connessione persistente con retry automatico"""
         if self.session is None:
              # Timeout ottimizzato per velocità
             timeout = aiohttp.ClientTimeout(total=3, connect=1)
@@ -64,8 +142,9 @@ class FastHarmonyHub:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
     
+    @network_retry(max_attempts=3, base_delay=0.5, max_delay=5.0)
     async def _send_ws_fast(self, command: Dict, timeout: int = 10) -> Dict:
-        """Invio WebSocket ultra-veloce con filtro ID"""
+        """Invio WebSocket ultra-veloce con filtro ID e retry automatico"""
         try:
             # Assicura connessione
             if not self._connected or self._ws is None or self._ws.closed:
@@ -92,17 +171,18 @@ class FastHarmonyHub:
                                 return data
                             # Se è un errore o altro, continua ad ascoltare
                         elif msg.type == aiohttp.WSMsgType.ERROR:
-                            return {"error": "WebSocket error"}
+                            raise aiohttp.ClientError("WebSocket error")
                         elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED):
                             self._connected = False
-                            return {"error": "Connection closed"}
+                            raise ConnectionError("WebSocket connection closed")
             except asyncio.TimeoutError:
                 # Se timeout, assumiamo inviato ma nessuna risposta (fire and forget o slow)
                 return {"status": "sent", "warning": "timeout waiting response"}
                     
         except Exception as e:
             self._connected = False
-            return {"error": str(e)}
+            # Re-raise the exception to let the retry decorator handle it
+            raise e
     
     async def start_activity_fast(self, activity_id: str) -> Dict:
         """Avvio attività ultra-veloce"""
@@ -190,6 +270,55 @@ class FastHarmonyHub:
         }
         return await self._send_ws_fast(command, timeout=2)
 
+    async def get_config_fast(self) -> Dict:
+        """Recupera configurazione completa del Hub ultra-veloce"""
+        command = {
+            "hubId": REMOTE_ID,
+            "timeout": 30,
+            "hbus": {
+                "cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?config",
+                "id": "0",
+                "params": {"verb": "get"}
+            }
+        }
+        return await self._send_ws_fast(command, timeout=3)
+
+    async def get_hub_info_fast(self) -> Dict:
+        """Recupera informazioni del Hub ultra-veloce"""
+        command = {
+            "hubId": REMOTE_ID,
+            "timeout": 10,
+            "hbus": {
+                "cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?getCurrentActivity",
+                "id": "0",
+                "params": {"verb": "get"}
+            }
+        }
+        # Get current activity first, then we can extend this with more hub info
+        current_result = await self._send_ws_fast(command, timeout=2)
+        
+        # Add hub connection info to the result
+        hub_info = {
+            "ip": HUB_IP,
+            "remote_id": REMOTE_ID,
+            "current_activity": current_result
+        }
+        
+        return {"data": hub_info, "cmd": "hub_info"}
+
+    async def get_provision_info_fast(self) -> Dict:
+        """Recupera informazioni di provisioning del Hub ultra-veloce"""
+        command = {
+            "hubId": REMOTE_ID,
+            "timeout": 10,
+            "hbus": {
+                "cmd": "setup.account?getProvisionInfo",
+                "id": "0",
+                "params": {}
+            }
+        }
+        return await self._send_ws_fast(command, timeout=3)
+
 async def main():
     parser = argparse.ArgumentParser(
         description="🚀 Harmony Hub FAST CLI Controller - Controllo ultra-veloce del tuo sistema multimediale",
@@ -227,11 +356,19 @@ async def main():
   harmony.py list        📋 Lista completa   (Tutti i comandi)
   harmony.py help        ❓ Questo help      (Guida dettagliata)
 
+🔍 DISCOVERY E CONFIGURAZIONE (0.5s - 2.0s):
+  harmony.py discover           🔍 Scopri configurazione Hub completa
+  harmony.py show-activity <id> 🎯 Dettagli attività specifica
+  harmony.py show-device <id>   📱 Dettagli dispositivo specifico
+  harmony.py show-hub           🏠 Informazioni Hub e performance
+  harmony.py export-config      💾 Esporta config.py aggiornato
+
 ⚡ PERFORMANCE:
   • Attività:     0.4s - 1.0s  (75% più veloce del CLI standard)
   • Audio:        0.3s         (Press/Release precision)
   • Stato:        0.18s        (18% più veloce)
   • Dispositivi:  0.3s - 0.5s  (Press/Release precision)
+  • Discovery:    0.5s - 2.0s  (Dipende dalla configurazione Hub)
 
 🔧 CONFIGURAZIONE:
   • Hub IP:       {HUB_IP}
@@ -246,7 +383,17 @@ async def main():
   harmony.py samsung PowerOff      # Spegni solo la TV
   harmony.py status               # Controlla cosa è attivo
   harmony.py off                  # Spegni tutto rapidamente
+  
+  # Discovery e configurazione:
+  harmony.py discover             # Scopri configurazione Hub
+  harmony.py show-activity 32923208 # Dettagli attività specifica
+  harmony.py show-device 43664815  # Dettagli dispositivo specifico
+  harmony.py show-hub             # Info Hub e test performance
+  harmony.py export-config        # Genera config.py aggiornato
+  
+  # Opzioni avanzate:
   harmony.py vol+ --no-press-release  # Modalità tradizionale
+  harmony.py discover --verbose       # Output dettagliato
 
 📝 NOTE:
   • I comandi sono case-insensitive
@@ -254,12 +401,14 @@ async def main():
   • Usa --no-press-release per modalità tradizionale se necessario
   • Timeout ottimizzati per velocità massima
   • Supporta tutti i dispositivi del tuo Hub Harmony
+  • Discovery commands richiedono connessione Hub attiva
+  • Usa --verbose per informazioni dettagliate su performance
         """
     )
     
     parser.add_argument('command', nargs='?', help='Comando da eseguire (usa "help" per guida completa)')
-    parser.add_argument('action', nargs='?', help='Azione per dispositivo (opzionale)')
-    parser.add_argument('-v', '--verbose', action='store_true', help='Output dettagliato')
+    parser.add_argument('action', nargs='?', help='Azione per dispositivo (es: PowerOn) o ID per discovery commands (es: activity/device ID)')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Output dettagliato con metriche performance')
     parser.add_argument('--no-press-release', action='store_true', help='Disabilita Press/Release (modalità tradizionale)')
     
     args = parser.parse_args()
@@ -269,14 +418,97 @@ async def main():
         parser.print_help()
         return
     
+    # Pre-validate commands that require parameters before connecting
+    cmd = args.command.lower()
+    if cmd == "show-activity" and not args.action:
+        print("❌ Specifica l'ID dell'attività: harmony.py show-activity <activity_id>")
+        return
+    elif cmd == "show-device" and not args.action:
+        print("❌ Specifica l'ID del dispositivo: harmony.py show-device <device_id>")
+        return
+    
+    # Handle commands that don't require hub connection
+    if cmd == "list":
+        print("╭─────────────────────────────────────────────────────────╮")
+        print("│                🎮 HARMONY FAST CLI                     │")
+        print("│                  Comandi Disponibili                   │")
+        print("╰─────────────────────────────────────────────────────────╯")
+        print()
+        print("🎯 ATTIVITÀ PRINCIPALI:")
+        for name, info in ACTIVITIES.items():
+            icon = {"tv": "📺", "music": "🎵", "shield": "🎮", "clima": "❄️", "off": "⚫"}.get(name, "🎯")
+            print(f"  {icon} {name:8} → {info['name']}")
+        
+        print("\n🎵 CONTROLLI AUDIO:")
+        audio_icons = {"vol+": "🔊", "vol-": "🔉", "mute": "🔇", "on": "🎵", "off": "🎵"}
+        for name, cmd_name in AUDIO_COMMANDS.items():
+            icon = audio_icons.get(name, "🎵")
+            print(f"  {icon} {name:8} → {cmd_name}")
+        print("  🎵 audio-on  → PowerOn Onkyo")
+        print("  🎵 audio-off → PowerOff Onkyo")
+        
+        print("\n📱 DISPOSITIVI:")
+        device_icons = {"onkyo": "🎵", "samsung": "📺", "shield": "🎮", "clima": "❄️", "xbox": "🎮", "ps3": "🎮"}
+        for name, info in DEVICES.items():
+            icon = device_icons.get(name, "📱")
+            print(f"  {icon} {name:8} → {info['name']}")
+        
+        print("\n🔍 INFORMAZIONI:")
+        print("  📊 status    → Stato attuale")
+        print("  📋 list      → Questa lista")
+        print("  ❓ help      → Guida completa")
+        
+        print("\n🔍 DISCOVERY E CONFIGURAZIONE:")
+        print("  🔍 discover           → Scopri configurazione Hub completa")
+        print("  🎯 show-activity <id> → Dettagli attività specifica")
+        print("  📱 show-device <id>   → Dettagli dispositivo specifico")
+        print("  🏠 show-hub           → Informazioni Hub e performance")
+        print("  💾 export-config      → Esporta config.py aggiornato")
+        
+        print("\n💡 ESEMPI PRATICI:")
+        print("  ./harmony.py tv                 # Avvia Guarda TV")
+        print("  ./harmony.py vol+ && ./harmony.py vol+  # Volume +2")
+        print("  ./harmony.py samsung PowerOff   # Spegni solo TV")
+        print("  ./harmony.py status            # Controlla stato")
+        print("  ./harmony.py discover          # Scopri configurazione")
+        print("  ./harmony.py show-activity 32923208  # Dettagli attività")
+        print("  ./harmony.py show-device 43664815    # Dettagli dispositivo")
+        print("  ./harmony.py show-hub          # Info Hub e performance")
+        print("  ./harmony.py export-config     # Genera config.py")
+        
+        print("\n⚡ PERFORMANCE:")
+        print("  • Attività:     0.4s - 1.0s")
+        print("  • Audio:        0.3s") 
+        print("  • Stato:        0.18s")
+        print("  • Dispositivi:  0.3s - 0.5s")
+        print("  • Discovery:    0.5s - 2.0s")
+        
+        print("\n🔧 OPZIONI:")
+        print("  --verbose             → Output dettagliato con metriche")
+        print("  --no-press-release    → Modalità tradizionale (no Press/Release)")
+        return
+    
     # 🚀 COMANDI ULTRA-VELOCI
-    async with FastHarmonyHub() as hub:
+    async with FastHarmonyHub(verbose_logging=args.verbose) as hub:
         cmd = args.command.lower()
         use_pr = not args.no_press_release  # Press/Release abilitato di default
         
         try:
+            # 🔍 DISCOVERY COMMANDS (New functionality with performance monitoring)
+            if cmd in ["discover", "show-activity", "show-device", "show-hub", "export-config"]:
+                try:
+                    from discovery_handlers import handle_discovery_command
+                    success = await handle_discovery_command(
+                        hub, cmd, args.action, args.verbose, HUB_IP, REMOTE_ID
+                    )
+                    if not success:
+                        return  # Error already printed by handler
+                except ImportError:
+                    print("❌ Discovery handlers non disponibili")
+                    return
+
             # 🎯 ATTIVITÀ (Priorità su tutto: se scrivo 'off' voglio spegnere il sistema)
-            if cmd in ACTIVITIES:
+            elif cmd in ACTIVITIES:
                 activity = ACTIVITIES[cmd]
                 if args.verbose:
                     print(f"🚀 Avvio attività: {activity['name']} (ID: {activity['id']})")
@@ -301,29 +533,40 @@ async def main():
                 else:
                     print(f"❌ {result['error']}")
 
-            # 🎵 AUDIO ONKYO
-            # Verifica che 'onkyo' esista nei device prima di usarlo hardcoded
-            elif cmd in AUDIO_COMMANDS and "onkyo" in DEVICES:
-                if args.verbose:
-                    print(f"🎵 Invio comando audio: {AUDIO_COMMANDS[cmd]} → Onkyo (ID: {DEVICES['onkyo']['id']})")
-                
-                result = await hub.send_device_fast(DEVICES["onkyo"]["id"], AUDIO_COMMANDS[cmd], use_press_release=use_pr)
-                
-                if "error" not in result:
-                    print(f"🎵 {AUDIO_COMMANDS[cmd]}")
+            # 🎵 AUDIO COMMANDS
+            elif cmd in AUDIO_COMMANDS:
+                audio_alias, audio_device = find_audio_device()
+                if audio_device:
                     if args.verbose:
-                        print(f"📊 Risultato: {result}")
+                        print(f"🎵 Invio comando audio: {AUDIO_COMMANDS[cmd]} → {audio_device['name']} (ID: {audio_device['id']})")
+                    
+                    result = await hub.send_device_fast(audio_device["id"], AUDIO_COMMANDS[cmd], use_press_release=use_pr)
+                    
+                    if "error" not in result:
+                        print(f"🎵 {AUDIO_COMMANDS[cmd]}")
+                        if args.verbose:
+                            print(f"📊 Risultato: {result}")
+                    else:
+                        print(f"❌ {result['error']}")
                 else:
-                    print(f"❌ {result['error']}")
+                    print("❌ Nessun dispositivo audio trovato")
             
             # 🎵 AUDIO SPECIALI
-            elif cmd == "audio-on" and "onkyo" in DEVICES:
-                result = await hub.send_device_fast(DEVICES["onkyo"]["id"], "PowerOn", use_press_release=use_pr)
-                print("🎵 Onkyo ON" if "error" not in result else f"❌ {result['error']}")
+            elif cmd == "audio-on":
+                audio_alias, audio_device = find_audio_device()
+                if audio_device:
+                    result = await hub.send_device_fast(audio_device["id"], "PowerOn", use_press_release=use_pr)
+                    print(f"🎵 {audio_device['name']} ON" if "error" not in result else f"❌ {result['error']}")
+                else:
+                    print("❌ Nessun dispositivo audio trovato")
             
-            elif cmd == "audio-off" and "onkyo" in DEVICES:
-                result = await hub.send_device_fast(DEVICES["onkyo"]["id"], "PowerOff", use_press_release=use_pr) 
-                print("🎵 Onkyo OFF" if "error" not in result else f"❌ {result['error']}")
+            elif cmd == "audio-off":
+                audio_alias, audio_device = find_audio_device()
+                if audio_device:
+                    result = await hub.send_device_fast(audio_device["id"], "PowerOff", use_press_release=use_pr) 
+                    print(f"🎵 {audio_device['name']} OFF" if "error" not in result else f"❌ {result['error']}")
+                else:
+                    print("❌ Nessun dispositivo audio trovato")
             
             # 🔍 STATUS
             elif cmd == "status":
@@ -343,48 +586,17 @@ async def main():
                 else:
                     print(f"❌ {result}")
             
-            # 📋 LISTA
-            elif cmd == "list":
-                print("╭─────────────────────────────────────────────────────────╮")
-                print("│                🎮 HARMONY FAST CLI                     │")
-                print("│                  Comandi Disponibili                   │")
-                print("╰─────────────────────────────────────────────────────────╯")
-                print()
-                print("🎯 ATTIVITÀ PRINCIPALI:")
-                for name, info in ACTIVITIES.items():
-                    icon = {"tv": "📺", "music": "🎵", "shield": "🎮", "clima": "❄️", "off": "⚫"}.get(name, "🎯")
-                    print(f"  {icon} {name:8} → {info['name']}")
-                
-                print("\n🎵 CONTROLLI AUDIO:")
-                audio_icons = {"vol+": "🔊", "vol-": "🔉", "mute": "🔇", "on": "🎵", "off": "🎵"}
-                for name, cmd_name in AUDIO_COMMANDS.items():
-                    icon = audio_icons.get(name, "🎵")
-                    print(f"  {icon} {name:8} → {cmd_name}")
-                print("  🎵 audio-on  → PowerOn Onkyo")
-                print("  🎵 audio-off → PowerOff Onkyo")
-                
-                print("\n📱 DISPOSITIVI:")
-                device_icons = {"onkyo": "🎵", "samsung": "📺", "shield": "🎮", "clima": "❄️", "xbox": "🎮", "ps3": "🎮"}
-                for name, info in DEVICES.items():
-                    icon = device_icons.get(name, "📱")
-                    print(f"  {icon} {name:8} → {info['name']}")
-                
-                print("\n🔍 INFORMAZIONI:")
-                print("  📊 status    → Stato attuale")
-                print("  📋 list      → Questa lista")
-                print("  ❓ help      → Guida completa")
-                
-                print("\n💡 ESEMPI PRATICI:")
-                print("  ./harmony.py tv                 # Avvia Guarda TV")
-                print("  ./harmony.py vol+ && ./harmony.py vol+  # Volume +2")
-                print("  ./harmony.py samsung PowerOff   # Spegni solo TV")
-                print("  ./harmony.py status            # Controlla stato")
-                
-                print("\n⚡ PERFORMANCE:")
-                print("  • Attività:     0.4s - 1.0s")
-                print("  • Audio:        0.3s") 
-                print("  • Stato:        0.18s")
-                print("  • Dispositivi:  0.3s - 0.5s")
+            # ⚫ FALLBACK per 'off' se non definito in ACTIVITIES ma richiesto esplicitamente come attività di sistema
+            elif cmd == "off":
+                if args.verbose:
+                    print(f"🚀 Spegnimento sistema: PowerOff (ID: -1)")
+                result = await hub.start_activity_fast("-1")
+                if "error" not in result:
+                    print("⚫ SPEGNI TUTTO")
+                    if args.verbose:
+                        print(f"📊 Risultato: {result}")
+                else:
+                    print(f"❌ {result['error']}")
             
             else:
                 print(f"❌ Comando '{cmd}' non riconosciuto. Usa 'list' per vedere i comandi.")
