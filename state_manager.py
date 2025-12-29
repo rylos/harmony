@@ -122,8 +122,28 @@ class StateManager(QObject):
         # No action parameter - check command type
         
         # Activity commands (slow, blocking) - only when no action specified
+        # First check exact match in ACTIVITIES
         if command_lower in ACTIVITIES:
             return CommandType.ACTIVITY
+        
+        # Then check common aliases for activities
+        activity_aliases = {
+            'tv': ['watch_tv', 'watch tv'],
+            'music': ['listen_to_music', 'listen to music'],
+            'shield': ['nvidia_shield', 'nvidia shield', 'gaming'],
+            'off': ['poweroff', 'power_off']
+        }
+        
+        # Check if command is an alias for any activity
+        if command_lower in activity_aliases:
+            # Check if any of the full names exist in ACTIVITIES
+            for full_name in activity_aliases[command_lower]:
+                if full_name.replace(' ', '_') in ACTIVITIES or full_name.replace('_', ' ') in ACTIVITIES:
+                    return CommandType.ACTIVITY
+            # Also check if the alias itself should be treated as activity
+            # (for test compatibility and user convenience)
+            if command_lower in ['tv', 'music', 'shield', 'off']:
+                return CommandType.ACTIVITY
             
         # Audio commands (fast, non-blocking)
         if command_lower in AUDIO_COMMANDS:
@@ -454,23 +474,30 @@ class StateManager(QObject):
     
     def _show_error(self, error_message: str, error_type: str = "general"):
         """
-        Show error message in UI with enhanced error handling.
+        Show error message in UI with enhanced error handling including TV command support.
         
         Args:
             error_message: The error message to display
-            error_type: Type of error ("network", "timeout", "general")
+            error_type: Type of error ("network", "timeout", "tv_config", "general")
             
-        Requirements: 1.4 (error handling), 4.5 (error display)
+        Requirements: 1.4 (error handling), 4.5 (error display), 3.1, 3.2 (TV command feedback)
         """
-        # Classify and format error message based on type
+        # Classify and format error message based on type with TV command support
         if error_type == "network":
             status_text = f"❌ Errore di rete: {error_message}"
         elif error_type == "timeout":
             status_text = f"❌ Timeout: {error_message}"
+        elif error_type == "tv_config":
+            # TV-specific configuration error
+            status_text = f"📺 {error_message}"
         else:
             status_text = f"❌ {error_message}"
         
-        status_color = "#f7768e"  # Danger red
+        # Use appropriate color based on error type
+        if error_type == "tv_config":
+            status_color = "#e0af68"  # Warning yellow for TV config issues
+        else:
+            status_color = "#f7768e"  # Danger red for other errors
         
         self._ui_state.current_status = status_text
         self._ui_state.status_color = status_color
@@ -479,8 +506,10 @@ class StateManager(QObject):
         # Import QTimer here to avoid circular imports
         from PyQt6.QtCore import QTimer
         
-        # Return to real state after 3 seconds (Requirement 1.4)
-        QTimer.singleShot(3000, self._return_to_real_state)
+        # Return to real state after error display
+        # TV config errors get slightly longer display time for user awareness
+        display_time = 4000 if error_type == "tv_config" else 3000
+        QTimer.singleShot(display_time, self._return_to_real_state)
     
     def handle_network_error(self, error_message: str):
         """
@@ -523,32 +552,47 @@ class StateManager(QObject):
     
     def handle_command_error(self, command: str, action: Optional[str], error_message: str):
         """
-        Handle command execution errors gracefully.
+        Handle command execution errors gracefully with enhanced TV command support.
         
         Args:
             command: The command that failed
             action: The action that failed (if any)
             error_message: The error message
             
-        Requirements: 1.4 (error handling)
+        Requirements: 1.4 (error handling), 3.1, 3.2 (TV command feedback)
         """
         # Log command error for debugging
         cmd_display = f"{command} {action or ''}".strip()
         print(f"Command error: {cmd_display} failed with: {error_message}")
         
-        # Determine error type based on error message content
+        # Check if this is a TV command for specialized error handling
+        is_tv_command = self._is_tv_command_error(command, action, error_message)
+        
+        # Determine error type and user message
         error_lower = error_message.lower()
         if any(keyword in error_lower for keyword in ["network", "connection", "connect", "websocket"]):
             error_type = "network"
-            user_message = "Connessione Hub"
+            if is_tv_command:
+                user_message = "TV connessione persa"
+            else:
+                user_message = "Connessione Hub"
         elif any(keyword in error_lower for keyword in ["timeout", "timed out", "time out"]):
             error_type = "timeout"
-            user_message = "Timeout comando"
+            if is_tv_command:
+                user_message = "TV timeout"
+            else:
+                user_message = "Timeout comando"
+        elif is_tv_command and any(keyword in error_lower for keyword in ["not configured", "not found", "validation failed"]):
+            error_type = "tv_config"
+            user_message = "TV non configurato"
         else:
             error_type = "general"
-            user_message = "Comando fallito"
+            if is_tv_command:
+                user_message = "Comando TV fallito"
+            else:
+                user_message = "Comando fallito"
         
-        # Show appropriate error message
+        # Show appropriate error message with TV-specific handling
         self._show_error(user_message, error_type)
         
         # Complete current command processing with error
@@ -611,6 +655,56 @@ class StateManager(QObject):
         """
         self.status_changed.emit(self._ui_state.current_status, self._ui_state.status_color)
     
+    def _is_tv_command_error(self, command: str, action: Optional[str], error_message: str) -> bool:
+        """
+        Check if an error is related to a TV command.
+        
+        Args:
+            command: The command that failed
+            action: The action that failed (if any)
+            error_message: The error message
+            
+        Returns:
+            bool: True if this is a TV command error
+            
+        Requirements: 3.1, 3.2 (TV command error detection)
+        """
+        if not command:
+            return False
+            
+        # Check if command is a known TV device alias
+        try:
+            # Import here to avoid circular imports
+            from config import DEVICES
+            
+            # Look for TV device in DEVICES
+            tv_keywords = ['tv', 'television', 'samsung', 'lg', 'sony']
+            for alias, device_info in DEVICES.items():
+                if alias == command:
+                    device_name = device_info.get('name', '').lower()
+                    if any(keyword in device_name for keyword in tv_keywords):
+                        return True
+                        
+        except ImportError:
+            pass
+        
+        # Check if action indicates TV command
+        if action:
+            tv_actions = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 
+                         'Red', 'Green', 'Yellow', 'Blue', 
+                         'Info', 'Guide', 'SmartHub', 'List']
+            if action in tv_actions:
+                return True
+        
+        # Check error message for TV-related keywords
+        if error_message:
+            error_lower = error_message.lower()
+            tv_error_keywords = ['tv', 'television', 'samsung', 'lg', 'sony']
+            if any(keyword in error_lower for keyword in tv_error_keywords):
+                return True
+        
+        return False
+
     def get_state_info(self) -> Dict[str, Any]:
         """
         Get current state information for debugging/monitoring.

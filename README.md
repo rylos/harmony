@@ -1,123 +1,198 @@
-# Logitech Harmony Hub Controller (CLI + GUI)
+# 🌃 Harmony Hub Controller - Tokyo Night Edition
 
-> **Status**: Stable, Production Ready
->
-> **Description**: High-performance, hybrid controller (CLI + GUI) for Logitech Harmony Hub featuring async WebSocket communication and a modern Qt6 interface.
+A high-performance hybrid controller (CLI + GUI) for Logitech Harmony Hub devices featuring async WebSocket communication and a modern Qt6 interface.
 
-![Harmony Controller](screenshot.png)
+## ✨ Features
 
-## 📋 Overview
-A fast, hybrid controller (CLI + GUI) designed for the [Logitech Harmony Hub](https://support.myharmony.com/it-it/hub).
-This project provides an ultra-fast Python interface to control your home automation and entertainment devices directly from your Linux desktop.
+- **🎯 Dual Interface**: Both command-line and graphical user interface
+- **⚡ Async Performance**: WebSocket-based communication optimized for speed  
+- **🌃 Modern UI**: Tokyo Night themed Qt6 interface
+- **🧠 Smart Commands**: Context-aware device control based on active activities
+- **🐧 Linux Desktop Integration**: Menu shortcuts, aliases, and desktop file support
+- **🔍 Auto-Discovery**: Automatically discover and configure your Harmony Hub
 
-### 🔌 Compatible Hardware
-This controller works with any **Logitech Harmony Hub** based system, including:
-- **Harmony Elite**
-- **Harmony Companion**
-- **Harmony Smart Control**
-- **Harmony Ultimate Home**
-- **Harmony Pro**
-- **Harmony Hub** (Standalone)
+## 🚀 Getting Started
 
-### 🏗 Architecture
-The system is divided into two layers:
-1.  **Backend (CLI - `harmony.py`)**: Handles asynchronous WebSocket communication with the Hub. Optimized for speed using `aiohttp` and a "fire-and-forget" logic with precise timeouts.
-2.  **Frontend (GUI - `harmony_gui.py`)**: Qt6 interface acting as a wrapper. It contains no business logic but invokes the CLI in separate threads (`QThread`) to avoid blocking the UI.
+**New users start here!** This guide will get you up and running in 3 simple steps.
 
----
-
-## 🔧 Technical Details & Development
-
-### 1. Backend (`harmony.py`)
-- **Libraries**: `aiohttp`, `asyncio`, `argparse`.
-- **Configuration**: Uses `config.py` for Hub IP, Remote ID, and mappings (see `config.sample.py`).
-- **Smart CLI Logic**:
-  - If called as `./harmony.py <name>` (e.g., `shield`) → Starts **ACTIVITY**.
-  - If called as `./harmony.py <name> <command>` (e.g., `shield DirectionUp`) → Sends command to **DEVICE**.
-- **Optimized Timings**:
-  - Activity Timeout: 3.0s
-  - Status Timeout: 2.0s
-  - IR Timeout (Press/Release): 0.2s (total ~0.45s per cycle)
-  - **Press/Release**: Implements physical button simulation (sends "press", waits 0.05s, sends "release").
-
-### 2. Frontend (`harmony_gui.py`)
-- **Libraries**: `PyQt6` (Core, Widgets, Gui).
-- **Layout System**:
-  - Main `QVBoxLayout`.
-  - **Smart Remote Section**: Unified, context-aware interface.
-    - **Smart D-Pad (Left)**: Routes navigation commands (Up/Down/OK/Back) to the active device based on current Activity (e.g., Samsung TV vs Shield).
-    - **TV Controls (Right)**: Dedicated Numpad and color keys for TV control.
-    - **Compact Design**: Highly optimized layout for minimal screen footprint.
-- **Helper**: `create_btn(text, cmd, icon)` handles creation and signal binding.
-- **Styling**: Inline CSS with Python dictionary `C` for consistent theming.
-
----
-
-## 🎨 Design System (Tokyo Night Modern)
-
-The GUI implements the "Tokyo Night" aesthetic for a modern look. The file `harmony_gui.py` uses a dictionary `C` to centralize colors.
-
-```python
-C = {
-    'bg':      '#1a1b26',  # Deep Night (Window Background)
-    'surface': '#24283b',  # Storm (Cards, Buttons)
-    'active':  '#7aa2f7',  # Blue (Focus, TV Activity, OK Button)
-    'accent':  '#bb9af7',  # Purple (Music, Shield, Borders)
-    'danger':  '#f7768e',  # Red (Power Off)
-    'text':    '#c0caf5',  # White-ish (Main Text)
-    'subtext': '#565f89',  # Grey (Labels, OFF state)
-    'border':  '#414868',  # Highlight (Thin borders)
-}
-```
-
----
-
-## 🚀 Quick Start
-
-### 1. Installation
-Clone the repository and install dependencies:
+### Step 1: Install Dependencies
 
 ```bash
-git clone git@github.com:rylos/harmony.git
+# Clone the repository
+git clone https://github.com/rylos/harmony.git
 cd harmony
+
+# Create virtual environment
 python3 -m venv harmony_env
 source harmony_env/bin/activate
+
+# Install requirements
 pip install -r requirements.txt
 ```
 
-### 2. Configuration
-Copy the sample configuration and edit it with your Hub details:
+### Step 2: Create Your Configuration (IMPORTANT!)
+
+**You MUST create a `config.py` file before using the application.** Use the built-in discovery system:
 
 ```bash
-cp config.sample.py config.py
-nano config.py
+# Discover your Harmony Hub automatically
+python harmony.py discover
+
+# This will show you all available activities and devices
+# Then export the configuration to config.py
+python harmony.py export-config
 ```
-*You will need your Hub IP and Remote ID. You can find these in your router settings or by using a discovery tool.*
 
-### 3. Usage
+**What this does:**
+- Scans your network for Harmony Hubs
+- Shows all your activities (Watch TV, Listen to Music, etc.)
+- Shows all your devices (TV, Receiver, etc.) and their commands
+- Creates a `config.py` file with your specific setup
 
-**GUI:**
+### Step 3: Start Using It!
+
 ```bash
+# Launch the GUI (recommended for beginners)
 ./start_harmony_gui.sh
+
+# Or use CLI commands directly
+./harmony.py status                  # Check current status
+./harmony.py <activity_name>         # Start an activity
+./harmony.py <device> <command>      # Send device command
 ```
 
-**CLI Examples:**
+## 🎮 Usage Examples
+
+### Activities
+
 ```bash
-./harmony.py tv                    # Start "Watch TV" Activity
-./harmony.py shield DirectionUp    # Send "Up" to Shield
-./harmony.py samsung 1             # Send "1" to Samsung TV
-./harmony.py off                   # Power Off Everything
-./harmony.py list                  # List all available commands
+./harmony.py guarda_tv        # Start "Watch TV" activity
+./harmony.py shield           # Start "Shield" activity  
+./harmony.py ascolta_musica   # Start "Listen to Music" activity
+./harmony.py off              # Power off everything
 ```
 
+### Device Commands
+
+```bash
+./harmony.py tv_samsung PowerOn
+./harmony.py onkyo_av_receiver VolumeUp
+./harmony.py nvidia_game_console Home
+```
+
+### Quick Audio Controls
+
+```bash
+./harmony.py vol+             # Volume up
+./harmony.py vol-             # Volume down
+./harmony.py mute             # Mute/unmute
+```
+
+## 🔧 Discovery & Configuration Commands
+
+Need to reconfigure or explore your setup? Use these commands:
+
+```bash
+python harmony.py discover                    # Show complete hub overview
+python harmony.py show-activity <name>        # Show activity details
+python harmony.py show-device <name>          # Show device details  
+python harmony.py show-hub                    # Show hub information
+python harmony.py export-config               # Generate config.py file
+```
+
+## 🖥️ Desktop Integration
+
+```bash
+# Add to KDE menu
+./install_to_menu.sh
+
+# Setup CLI aliases
+./setup_aliases.sh
+```
+
+## 📁 Project Structure
+
+```text
+harmony/
+├── harmony.py                    # Core CLI backend
+├── harmony_gui.py                # Qt6 GUI frontend
+├── state_manager.py              # State management system
+├── config_models.py              # Configuration data models
+├── config_exporter.py            # Configuration export functionality
+├── discovery_handlers.py         # Discovery command handlers
+├── display_formatter.py          # Output formatting
+├── config.py                     # Your hub configuration (auto-generated)
+├── config.sample.py              # Configuration template
+├── start_harmony_gui.sh          # GUI launcher
+├── install_to_menu.sh            # Desktop integration
+├── setup_aliases.sh              # CLI aliases setup
+├── harmony-hub-controller.desktop # Desktop entry
+├── requirements.txt              # Python dependencies
+└── harmony_env/                  # Python virtual environment
+```
+
+## 🎯 Compatible Hardware
+
+- Harmony Elite, Companion, Smart Control
+- Harmony Ultimate Home, Pro  
+- Standalone Harmony Hub
+
+## ⚡ Performance Features
+
+- **Timeouts**: Activity (3.0s), Status (2.0s), IR commands (0.2s)
+- **Press/Release Simulation**: 0.05s delay between press/release
+- **Fire-and-forget**: Optimized for speed over reliability
+- **Persistent Connections**: WebSocket connection reuse
+- **Command Queueing**: Sequential processing with visual feedback
+
+## 🛠️ Tech Stack
+
+- **Python 3** - Main programming language
+- **PyQt6** - GUI framework with modern Qt6 interface
+- **aiohttp** - Async HTTP client for WebSocket communication
+- **asyncio** - Asynchronous programming support
+
+## 🆘 Troubleshooting
+
+### "No config.py found" Error
+
+This is the most common issue for new users. You need to create the configuration file:
+
+```bash
+# Make sure your Harmony Hub is on and connected to your network
+python harmony.py discover
+python harmony.py export-config
+```
+
+### Hub Not Found During Discovery
+
+- Ensure your Harmony Hub is powered on and connected to the same network
+- Check that your computer can reach the hub's IP address
+- Try running discovery multiple times (sometimes takes a moment)
+
+### GUI Won't Start
+
+```bash
+# Check if PyQt6 is properly installed
+pip install --upgrade PyQt6
+
+# Try launching directly
+python harmony_gui.py
+```
+
+### Permission Issues with Scripts
+
+```bash
+# Make scripts executable
+chmod +x start_harmony_gui.sh
+chmod +x install_to_menu.sh
+chmod +x setup_aliases.sh
+```
+
+## 📄 License
+
+See LICENSE file for details.
+
 ---
 
-## 📂 File Structure
-- `harmony.py`: Core CLI logic.
-- `harmony_gui.py`: PyQt6 Interface.
-- `config.py`: User configuration (Ignored by Git).
-- `DEVICE_COMMANDS.md`: Reference for all available commands.
-
----
-
-**Note**: This is a personal project optimized for a specific setup but built to be easily adaptable.
+Built with ❤️ for the Logitech Harmony Hub community
