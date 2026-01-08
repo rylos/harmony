@@ -897,7 +897,7 @@ class GUI(QMainWindow):
         # Questi potrebbero essere smart o fissi. Home/Back spesso variano.
         # Usiamo smart per coerenza
         n_home = self.create_btn("Home", "smart_ Home", "🏠")
-        n_back = self.create_btn("Back", "smart_ Return", "↩️") # Return/Back (Harmony often uses Return or Back)
+        n_back = self.create_btn("Back", "smart_ Back", "↩️") # Back command for consistency with device buttons
         n_menu = self.create_btn("Menu", "smart_ Menu", "☰")
         n_exit = self.create_btn("Exit", "smart_ Exit", "✖️")
         
