@@ -182,59 +182,45 @@ class FastHarmonyHub:
     
     async def send_device_fast(self, device_id: str, command: str, use_press_release: bool = True) -> Dict:
         """Comando dispositivo con Press/Release per massima precisione"""
-        action = {
-            "command": command,
-            "type": "IRCommand", 
-            "deviceId": device_id
+        action_json = json.dumps({"command": command, "type": "IRCommand", "deviceId": device_id})
+        
+        params = {
+            "status": "press",
+            "timestamp": "0",
+            "verb": "render",
+            "action": action_json,
+        }
+        cmd_press = {
+            "hubId": REMOTE_ID, "timeout": 10,
+            "hbus": {
+                "cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?holdAction",
+                "id": "0", "params": params,
+            },
         }
         
         if use_press_release:
-            # Metodo Press/Release per precisione massima (come telecomando reale)
-            cmd_press = {
-                "hubId": REMOTE_ID,
-                "timeout": 10,
-                "hbus": {
-                    "cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?holdAction",
-                    "id": "0",
-                    "params": {
-                        "status": "press",
-                        "timestamp": "0",
-                        "verb": "render",
-                        "action": json.dumps(action)
-                    }
-                }
-            }
-            
-            # Invia Press
+            # Press — await response
             result = await self._send_ws_fast(cmd_press, timeout=0.2)
             
-            # Piccola pausa (simula pressione tasto reale)
-            await asyncio.sleep(0.05)
+            # Minimal pause to simulate real button press
+            await asyncio.sleep(0.02)
             
-            # Release
-            import copy
-            cmd_release = copy.deepcopy(cmd_press)
-            cmd_release["hbus"]["params"]["status"] = "release"
-            await self._send_ws_fast(cmd_release, timeout=0.2)
+            # Release — fire-and-forget (Hub never responds to release)
+            self._msg_counter += 1
+            release_params = dict(params, status="release")
+            cmd_release = {
+                "hubId": REMOTE_ID, "timeout": 10, "id": str(self._msg_counter),
+                "hbus": {
+                    "cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?holdAction",
+                    "id": str(self._msg_counter), "params": release_params,
+                },
+            }
+            if self._ws and not self._ws.closed:
+                await self._ws.send_str(json.dumps(cmd_release))
             
             return result
         else:
-            # Metodo tradizionale (per compatibilità)
-            cmd = {
-                "hubId": REMOTE_ID,
-                "timeout": 10,
-                "hbus": {
-                    "cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?holdAction",
-                    "id": "0",
-                    "params": {
-                        "status": "press",
-                        "timestamp": "0",
-                        "verb": "render",
-                        "action": json.dumps(action)
-                    }
-                }
-            }
-            return await self._send_ws_fast(cmd, timeout=1)
+            return await self._send_ws_fast(cmd_press, timeout=1)
     
     async def get_current_fast(self) -> Dict:
         """Stato corrente ultra-veloce"""
@@ -496,51 +482,27 @@ async def main():
                 print("╰─────────────────────────────────────────╯")
                 print()
                 
-                # 1. Status (round-trip)
-                times = []
-                for i in range(5):
-                    t0 = _t.perf_counter()
-                    await hub.get_current_fast()
-                    times.append((_t.perf_counter() - t0) * 1000)
-                avg = sum(times) / len(times)
-                print(f"📊 Status (getCurrentActivity):")
-                print(f"   {' / '.join(f'{t:.0f}ms' for t in times)}")
-                print(f"   avg: {avg:.0f}ms  min: {min(times):.0f}ms  max: {max(times):.0f}ms")
-                print()
-                
-                # 2. Device command (press+release) if audio device available
-                if audio_device:
-                    times = []
-                    for i in range(3):
-                        t0 = _t.perf_counter()
-                        await hub.send_device_fast(audio_device["id"], "Mute", use_press_release=True)
-                        times.append((_t.perf_counter() - t0) * 1000)
-                        await asyncio.sleep(0.3)  # unmute
-                        await hub.send_device_fast(audio_device["id"], "Mute", use_press_release=True)
-                        await asyncio.sleep(0.3)
+                def _stats(times):
                     avg = sum(times) / len(times)
-                    print(f"📊 Device command (press+release Mute):")
-                    print(f"   {' / '.join(f'{t:.0f}ms' for t in times)}")
-                    print(f"   avg: {avg:.0f}ms  min: {min(times):.0f}ms  max: {max(times):.0f}ms")
-                    print()
+                    mn, mx = min(times), max(times)
+                    p50 = sorted(times)[len(times) // 2]
+                    return f"avg: {avg:.0f}ms  p50: {p50:.0f}ms  min: {mn:.0f}ms  max: {mx:.0f}ms"
                 
-                # 3. Raw send_str latency (no response wait)
+                # 1. Raw send_str latency (10x)
                 times = []
-                for i in range(5):
-                    t0 = _t.perf_counter()
+                for _ in range(10):
                     hub._msg_counter += 1
                     msg = json.dumps({"hubId": REMOTE_ID, "timeout": 1, "id": str(hub._msg_counter),
                         "hbus": {"cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?getCurrentActivity",
                                  "id": str(hub._msg_counter), "params": {"verb": "get"}}})
+                    t0 = _t.perf_counter()
                     await hub._ws.send_str(msg)
                     times.append((_t.perf_counter() - t0) * 1000)
-                avg = sum(times) / len(times)
-                print(f"📊 Raw WebSocket send_str:")
+                print(f"📊 Raw WebSocket send_str (10x):")
                 print(f"   {' / '.join(f'{t:.1f}ms' for t in times)}")
-                print(f"   avg: {avg:.1f}ms  min: {min(times):.1f}ms  max: {max(times):.1f}ms")
+                print(f"   {_stats(times)}")
                 print()
-                
-                # drain stale responses
+                # drain
                 try:
                     async with asyncio.timeout(0.5):
                         async for msg in hub._ws:
@@ -548,6 +510,86 @@ async def main():
                                 break
                 except asyncio.TimeoutError:
                     pass
+                
+                # 2. Status round-trip (10x)
+                times = []
+                for _ in range(10):
+                    t0 = _t.perf_counter()
+                    await hub.get_current_fast()
+                    times.append((_t.perf_counter() - t0) * 1000)
+                print(f"📊 Status round-trip (10x):")
+                print(f"   {' / '.join(f'{t:.0f}ms' for t in times)}")
+                print(f"   {_stats(times)}")
+                print()
+                
+                # 3. Device press+release breakdown (5x Mute toggle)
+                if audio_device:
+                    t_press, t_sleep, t_release, t_total = [], [], [], []
+                    for _ in range(5):
+                        action = {"command": "Mute", "type": "IRCommand", "deviceId": audio_device["id"]}
+                        action_json = json.dumps(action)
+                        
+                        t0 = _t.perf_counter()
+                        # Press
+                        tp0 = _t.perf_counter()
+                        cmd_press = {"hubId": REMOTE_ID, "timeout": 10, "hbus": {
+                            "cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?holdAction",
+                            "id": "0", "params": {"status": "press", "timestamp": "0",
+                                                  "verb": "render", "action": action_json}}}
+                        await hub._send_ws_fast(cmd_press, timeout=0.2)
+                        tp1 = _t.perf_counter()
+                        t_press.append((tp1 - tp0) * 1000)
+                        
+                        # Sleep
+                        ts0 = _t.perf_counter()
+                        await asyncio.sleep(0.05)
+                        ts1 = _t.perf_counter()
+                        t_sleep.append((ts1 - ts0) * 1000)
+                        
+                        # Release
+                        import copy
+                        cmd_release = copy.deepcopy(cmd_press)
+                        cmd_release["hbus"]["params"]["status"] = "release"
+                        tr0 = _t.perf_counter()
+                        await hub._send_ws_fast(cmd_release, timeout=0.2)
+                        tr1 = _t.perf_counter()
+                        t_release.append((tr1 - tr0) * 1000)
+                        
+                        t_total.append((_t.perf_counter() - t0) * 1000)
+                        
+                        # Unmute
+                        await asyncio.sleep(0.3)
+                        await hub.send_device_fast(audio_device["id"], "Mute")
+                        await asyncio.sleep(0.3)
+                    
+                    print(f"📊 Device command breakdown (5x Mute):")
+                    print(f"   Press:   {' / '.join(f'{t:.0f}ms' for t in t_press)}  → {_stats(t_press)}")
+                    print(f"   Sleep:   {' / '.join(f'{t:.0f}ms' for t in t_sleep)}  → {_stats(t_sleep)}")
+                    print(f"   Release: {' / '.join(f'{t:.0f}ms' for t in t_release)}  → {_stats(t_release)}")
+                    print(f"   Total:   {' / '.join(f'{t:.0f}ms' for t in t_total)}  → {_stats(t_total)}")
+                    print()
+                
+                # 4. Config retrieval (3x)
+                times = []
+                for _ in range(3):
+                    t0 = _t.perf_counter()
+                    await hub.get_config_fast()
+                    times.append((_t.perf_counter() - t0) * 1000)
+                print(f"📊 Config retrieval (3x):")
+                print(f"   {' / '.join(f'{t:.0f}ms' for t in times)}")
+                print(f"   {_stats(times)}")
+                print()
+                
+                # 5. Activity start (off → off, safe no-op, 3x)
+                times = []
+                for _ in range(3):
+                    t0 = _t.perf_counter()
+                    await hub.start_activity_fast("-1")
+                    times.append((_t.perf_counter() - t0) * 1000)
+                print(f"📊 Activity start (PowerOff no-op, 3x):")
+                print(f"   {' / '.join(f'{t:.0f}ms' for t in times)}")
+                print(f"   {_stats(times)}")
+                print()
                 
                 print("✅ Benchmark completato")
 
