@@ -9,6 +9,7 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 from PyQt6.QtCore import QObject, pyqtSignal
+from device_helpers import TV_ACTIONS, TV_KEYWORDS, is_tv_device, is_tv_action
 
 
 class CommandType(Enum):
@@ -599,35 +600,24 @@ class StateManager(QObject):
         self.complete_command_processing(success=False, error_message=error_message)
     
     def recover_from_error(self):
-        """
-        Attempt to recover from error state.
-        
-        This method can be called to try to restore normal operation
-        after an error has occurred.
-        
-        Requirements: 1.4 (error handling)
-        """
-        # Clear any error state
+        """Attempt to recover from error state and restore normal operation."""
+        # Clear all state
         self.is_processing = False
         self.is_activity_changing = False
         self._current_command = None
+        self._command_queue.clear()
+        self.pending_commands = 0
         
-        # Update UI to show recovery attempt
-        self._ui_state.current_status = "🔄 Ripristino..."
-        self._ui_state.status_color = "#e0af68"  # Warning yellow
+        # Update UI
         self.status_changed.emit("🔄 Ripristino...", "#e0af68")
         
-        # Import QTimer here to avoid circular imports
         from PyQt6.QtCore import QTimer
-        
-        # Return to real state after brief recovery message
         QTimer.singleShot(1000, self._return_to_real_state)
         
         # Re-enable buttons
         self._ui_state.buttons_enabled = True
         self.buttons_state_changed.emit(True)
-        
-        # Clear activity state
+        self.queue_size_changed.emit(0)
         self.activity_state_changed.emit(False)
     
     def _return_to_real_state(self):
@@ -656,53 +646,19 @@ class StateManager(QObject):
         self.status_changed.emit(self._ui_state.current_status, self._ui_state.status_color)
     
     def _is_tv_command_error(self, command: str, action: Optional[str], error_message: str) -> bool:
-        """
-        Check if an error is related to a TV command.
-        
-        Args:
-            command: The command that failed
-            action: The action that failed (if any)
-            error_message: The error message
-            
-        Returns:
-            bool: True if this is a TV command error
-            
-        Requirements: 3.1, 3.2 (TV command error detection)
-        """
+        """Check if an error is related to a TV command."""
         if not command:
             return False
-            
-        # Check if command is a known TV device alias
         try:
-            # Import here to avoid circular imports
             from config import DEVICES
-            
-            # Look for TV device in DEVICES
-            tv_keywords = ['tv', 'television', 'samsung', 'lg', 'sony']
-            for alias, device_info in DEVICES.items():
-                if alias == command:
-                    device_name = device_info.get('name', '').lower()
-                    if any(keyword in device_name for keyword in tv_keywords):
-                        return True
-                        
+            if is_tv_device(DEVICES, command):
+                return True
         except ImportError:
             pass
-        
-        # Check if action indicates TV command
-        if action:
-            tv_actions = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 
-                         'Red', 'Green', 'Yellow', 'Blue', 
-                         'Info', 'Guide', 'SmartHub', 'List']
-            if action in tv_actions:
-                return True
-        
-        # Check error message for TV-related keywords
+        if is_tv_action(action):
+            return True
         if error_message:
-            error_lower = error_message.lower()
-            tv_error_keywords = ['tv', 'television', 'samsung', 'lg', 'sony']
-            if any(keyword in error_lower for keyword in tv_error_keywords):
-                return True
-        
+            return any(kw in error_message.lower() for kw in TV_KEYWORDS)
         return False
 
     def get_state_info(self) -> Dict[str, Any]:

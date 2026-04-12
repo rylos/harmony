@@ -71,30 +71,8 @@ def network_retry(max_attempts: int = 3, base_delay: float = 0.5, max_delay: flo
         return wrapper
     return decorator
 
-# 🔧 Device Helper Functions for flexible device detection
-def find_device_by_type(device_type_keywords):
-    """Find device by type keywords (case insensitive)"""
-    for alias, device_info in DEVICES.items():
-        device_name = device_info.get('name', '').lower()
-        for keyword in device_type_keywords:
-            if keyword.lower() in device_name:
-                return alias, device_info
-    return None, None
+from device_helpers import find_device_by_type, find_audio_device, find_tv_device, find_shield_device
 
-def find_audio_device():
-    """Find the primary audio device (receiver, amplifier, etc.)"""
-    audio_keywords = ['receiver', 'amplifier', 'amp', 'audio', 'stereo', 'soundbar', 'onkyo']
-    return find_device_by_type(audio_keywords)
-
-def find_tv_device():
-    """Find the primary TV device"""
-    tv_keywords = ['tv', 'television', 'samsung', 'lg', 'sony']
-    return find_device_by_type(tv_keywords)
-
-def find_shield_device():
-    """Find NVIDIA Shield or similar streaming device"""
-    shield_keywords = ['shield', 'nvidia', 'streaming']
-    return find_device_by_type(shield_keywords)
 
 # 🔧 CONFIGURATION (Loaded from config.py)
 HUB_IP = config.HUB_IP
@@ -143,7 +121,7 @@ class FastHarmonyHub:
         await self.close()
     
     @network_retry(max_attempts=3, base_delay=0.5, max_delay=5.0)
-    async def _send_ws_fast(self, command: Dict, timeout: int = 10) -> Dict:
+    async def _send_ws_fast(self, command: Dict, timeout: float = 10) -> Dict:
         """Invio WebSocket ultra-veloce con filtro ID e retry automatico"""
         try:
             # Assicura connessione
@@ -234,7 +212,8 @@ class FastHarmonyHub:
             await asyncio.sleep(0.05)
             
             # Release
-            cmd_release = cmd_press.copy()
+            import copy
+            cmd_release = copy.deepcopy(cmd_press)
             cmd_release["hbus"]["params"]["status"] = "release"
             await self._send_ws_fast(cmd_release, timeout=0.2)
             
@@ -535,7 +514,7 @@ async def main():
 
             # 🎵 AUDIO COMMANDS
             elif cmd in AUDIO_COMMANDS:
-                audio_alias, audio_device = find_audio_device()
+                audio_alias, audio_device = find_audio_device(DEVICES)
                 if audio_device:
                     if args.verbose:
                         print(f"🎵 Invio comando audio: {AUDIO_COMMANDS[cmd]} → {audio_device['name']} (ID: {audio_device['id']})")
@@ -553,7 +532,7 @@ async def main():
             
             # 🎵 AUDIO SPECIALI
             elif cmd == "audio-on":
-                audio_alias, audio_device = find_audio_device()
+                audio_alias, audio_device = find_audio_device(DEVICES)
                 if audio_device:
                     result = await hub.send_device_fast(audio_device["id"], "PowerOn", use_press_release=use_pr)
                     print(f"🎵 {audio_device['name']} ON" if "error" not in result else f"❌ {result['error']}")
@@ -561,7 +540,7 @@ async def main():
                     print("❌ Nessun dispositivo audio trovato")
             
             elif cmd == "audio-off":
-                audio_alias, audio_device = find_audio_device()
+                audio_alias, audio_device = find_audio_device(DEVICES)
                 if audio_device:
                     result = await hub.send_device_fast(audio_device["id"], "PowerOff", use_press_release=use_pr) 
                     print(f"🎵 {audio_device['name']} OFF" if "error" not in result else f"❌ {result['error']}")

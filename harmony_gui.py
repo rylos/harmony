@@ -4,15 +4,22 @@
 import sys
 import time
 import asyncio
+import aiohttp
 from pathlib import Path
 from typing import Optional
-from PyQt6.QtWidgets import *
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QObject, pyqtSlot
-from PyQt6.QtGui import QFont, QColor, QIcon, QPainter, QPen
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QGridLayout, QLabel, QPushButton, QFrame,
+)
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon
 
-# Import diretto (assumendo che harmony.py sia nello stesso path)
-import harmony
 from harmony import FastHarmonyHub, DEVICES, ACTIVITIES, AUDIO_COMMANDS
+from device_helpers import (
+    find_audio_device, find_tv_device, find_shield_device, find_climate_device,
+    TV_ACTIONS, TV_KEYWORDS, TV_SUCCESS_FEEDBACK,
+    is_tv_device, is_tv_action, get_tv_success_message, get_tv_error_message,
+)
 
 # 🎨 Palette Tokyo Night Modern (Minimal)
 C = {
@@ -26,35 +33,6 @@ C = {
     'border':  '#414868',  # Highlight
 }
 
-# 🔧 Device Helper Functions for flexible device detection
-def find_device_by_type(device_type_keywords):
-    """Find device by type keywords (case insensitive)"""
-    for alias, device_info in DEVICES.items():
-        device_name = device_info.get('name', '').lower()
-        for keyword in device_type_keywords:
-            if keyword.lower() in device_name:
-                return alias, device_info
-    return None, None
-
-def find_audio_device():
-    """Find the primary audio device (receiver, amplifier, etc.)"""
-    audio_keywords = ['receiver', 'amplifier', 'amp', 'audio', 'stereo', 'soundbar', 'onkyo']
-    return find_device_by_type(audio_keywords)
-
-def find_tv_device():
-    """Find the primary TV device"""
-    tv_keywords = ['tv', 'television', 'samsung', 'lg', 'sony']
-    return find_device_by_type(tv_keywords)
-
-def find_shield_device():
-    """Find NVIDIA Shield or similar streaming device"""
-    shield_keywords = ['shield', 'nvidia', 'streaming']
-    return find_device_by_type(shield_keywords)
-
-def find_climate_device():
-    """Find climate/air conditioning device"""
-    climate_keywords = ['clima', 'air conditioner', 'conditioner', 'climatizzatore']
-    return find_device_by_type(climate_keywords)
 
 STYLESHEET = f"""
     QMainWindow {{
@@ -179,14 +157,6 @@ class HarmonyWorker(QThread):
         cmd = cmd.lower()
         res = {"error": "Unknown command"}
         
-        # Import here to avoid circular imports
-        try:
-            from config import ACTIVITIES, DEVICES, AUDIO_COMMANDS
-        except ImportError:
-            ACTIVITIES = {}
-            DEVICES = {}
-            AUDIO_COMMANDS = {}
-        
         # Emit command started signal for progress tracking
         self.command_started.emit(cmd, action or "")
         
@@ -288,21 +258,21 @@ class HarmonyWorker(QThread):
                 
                 # Find appropriate device based on current activity
                 if act_id == tv_act_id:
-                    tv_alias, tv_device = find_tv_device()
+                    tv_alias, tv_device = find_tv_device(DEVICES)
                     if tv_device:
                         target_dev = tv_device["id"]
                 elif act_id == shield_act_id:
-                    shield_alias, shield_device = find_shield_device()
+                    shield_alias, shield_device = find_shield_device(DEVICES)
                     if shield_device:
                         target_dev = shield_device["id"]
                 elif act_id == music_act_id:
-                    audio_alias, audio_device = find_audio_device()
+                    audio_alias, audio_device = find_audio_device(DEVICES)
                     if audio_device:
                         target_dev = audio_device["id"]
                 
                 # Fallback: if we're in TV mode or undefined, try TV device if command is compatible
                 if not target_dev:
-                    tv_alias, tv_device = find_tv_device()
+                    tv_alias, tv_device = find_tv_device(DEVICES)
                     if tv_device:
                         target_dev = tv_device["id"]
 
@@ -326,7 +296,7 @@ class HarmonyWorker(QThread):
             
             # 2. AUDIO COMMANDS
             elif cmd in AUDIO_COMMANDS:
-                audio_alias, audio_device = find_audio_device()
+                audio_alias, audio_device = find_audio_device(DEVICES)
                 if audio_device:
                     # Validate audio device command before sending (Requirement 2.2)
                     if not self._validate_device_id_command(audio_device["id"], AUDIO_COMMANDS[cmd]):
@@ -348,7 +318,7 @@ class HarmonyWorker(QThread):
                     res = await self.hub.send_device_fast(device["id"], action)
                 
             elif cmd == "audio-on":
-                audio_alias, audio_device = find_audio_device()
+                audio_alias, audio_device = find_audio_device(DEVICES)
                 if audio_device:
                     # Validate audio device command before sending (Requirement 2.2)
                     if not self._validate_device_id_command(audio_device["id"], "PowerOn"):
@@ -359,7 +329,7 @@ class HarmonyWorker(QThread):
                 else:
                     res = {"error": "No audio device found in configuration"}
             elif cmd == "audio-off":
-                audio_alias, audio_device = find_audio_device()
+                audio_alias, audio_device = find_audio_device(DEVICES)
                 if audio_device:
                     # Validate audio device command before sending (Requirement 2.2)
                     if not self._validate_device_id_command(audio_device["id"], "PowerOff"):
@@ -381,37 +351,21 @@ class HarmonyWorker(QThread):
             message = res.get("error", "Command completed successfully")
             
             # Enhanced TV command feedback
-            if self._is_tv_command_execution(cmd, action):
-                if success:
-                    # Provide TV-specific success message
-                    tv_message = self._get_tv_success_message(action)
-                    message = tv_message
-                    print(f"TV command completed: {tv_message}")
-                else:
-                    # Provide TV-specific error message
-                    tv_error = self._get_tv_error_message(message)
-                    message = tv_error
-                    print(f"TV command failed: {tv_error}")
+            if is_tv_device(DEVICES, cmd) or is_tv_action(action):
+                message = get_tv_success_message(action) if success else get_tv_error_message(message)
             
-            # Handle specific error types for better user experience
             if not success:
                 error_msg = res.get("error", "Unknown error")
                 if self.state_manager:
+                    # handle_command_error calls complete_command_processing internally
                     self.state_manager.handle_command_error(cmd, action, error_msg)
                 else:
-                    # Fallback if no StateManager
                     self.command_completed.emit(cmd, action or "", False, error_msg)
             else:
-                # Emit completion signal for successful commands
-                self.command_completed.emit(cmd, action or "", success, message)
-            
-            # Update StateManager if available - ensure sequential processing continues
-            if self.state_manager:
-                self.state_manager.complete_command_processing(success=success, error_message=message if not success else None)
-                
-                # Verify sequential processing is still maintained after completion
-                if not self.state_manager.ensure_sequential_processing():
-                    print("WARNING: Sequential processing order violated after command completion")
+                self.command_completed.emit(cmd, action or "", True, message)
+                # Only call complete_command_processing for success (errors handled above)
+                if self.state_manager:
+                    self.state_manager.complete_command_processing(success=True)
             
             self.result_ready.emit(f"{cmd} {action or ''}", res)
             
@@ -512,197 +466,28 @@ class HarmonyWorker(QThread):
              self.loop.call_soon_threadsafe(self._cmd_queue.put_nowait, ("status", None))
 
     def _validate_device_command(self, device_alias: str, action: str) -> bool:
-        """
-        Validate that a device command is valid before sending.
-        
-        Args:
-            device_alias: The device alias to validate
-            action: The action to perform on the device
-            
-        Returns:
-            bool: True if device exists and command is valid, False otherwise
-            
-        Requirements: 2.2 (device command validation)
-        """
-        if not device_alias or not action:
+        """Validate that a device command is valid before sending."""
+        if not device_alias or not action or not action.strip():
             return False
-            
-        try:
-            # Import here to avoid circular imports
-            from config import DEVICES
-            
-            # Check if device exists in configuration
-            if device_alias not in DEVICES:
-                return False
-                
-            # Validate device has required fields
-            device_info = DEVICES[device_alias]
-            if not isinstance(device_info, dict):
-                return False
-                
-            # Device must have an ID to send commands
-            if 'id' not in device_info or not device_info['id']:
-                return False
-                
-            # Action must be non-empty string
-            if not action.strip():
-                return False
-                
-            return True
-            
-        except ImportError:
-            # If config is not available, consider invalid
+        device_info = DEVICES.get(device_alias)
+        if not isinstance(device_info, dict):
             return False
-        except Exception as e:
-            # Log validation error for debugging
-            print(f"Device validation error: {e}")
-            return False
+        return bool(device_info.get('id'))
 
     def _validate_device_id_command(self, device_id: str, action: str) -> bool:
-        """
-        Validate that a device ID command is valid before sending.
-        
-        Args:
-            device_id: The device ID to validate
-            action: The action to perform on the device
-            
-        Returns:
-            bool: True if device ID exists and command is valid, False otherwise
-            
-        Requirements: 2.2 (device command validation)
-        """
-        if not device_id or not action:
+        """Validate that a device ID command is valid before sending."""
+        if not device_id or not action or not action.strip():
             return False
-            
-        try:
-            # Import here to avoid circular imports
-            from config import DEVICES
-            
-            # Check if device ID exists in any device configuration
-            device_found = False
-            for alias, device_info in DEVICES.items():
-                if isinstance(device_info, dict) and device_info.get('id') == device_id:
-                    device_found = True
-                    break
-                    
-            if not device_found:
-                return False
-                
-            # Action must be non-empty string
-            if not action.strip():
-                return False
-                
-            return True
-            
-        except ImportError:
-            # If config is not available, consider invalid
-            return False
-        except Exception as e:
-            # Log validation error for debugging
-            print(f"Device ID validation error: {e}")
-            return False
+        return any(
+            isinstance(info, dict) and info.get('id') == device_id
+            for info in DEVICES.values()
+        )
 
-    def _is_tv_command_execution(self, cmd: str, action: Optional[str]) -> bool:
-        """
-        Check if a command execution is for a TV device.
-        
-        Args:
-            cmd: The command being executed
-            action: The action being executed
-            
-        Returns:
-            bool: True if this is a TV command execution
-            
-        Requirements: 3.1, 3.2 (TV command feedback detection)
-        """
-        if not cmd:
-            return False
-            
-        try:
-            # Import here to avoid circular imports
-            from config import DEVICES
-            
-            # Check if cmd is a TV device alias
-            if cmd in DEVICES:
-                device_info = DEVICES[cmd]
-                device_name = device_info.get('name', '').lower()
-                tv_keywords = ['tv', 'television', 'samsung', 'lg', 'sony']
-                if any(keyword in device_name for keyword in tv_keywords):
-                    return True
-                    
-        except ImportError:
-            pass
-        
-        # Check if action indicates TV command
-        if action:
-            tv_actions = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 
-                         'Red', 'Green', 'Yellow', 'Blue', 
-                         'Info', 'Guide', 'SmartHub', 'List']
-            return action in tv_actions
-            
-        return False
     
-    def _get_tv_success_message(self, action: Optional[str]) -> str:
-        """
-        Get TV-specific success message.
-        
-        Args:
-            action: The TV action that succeeded
-            
-        Returns:
-            str: TV-specific success message
-            
-        Requirements: 3.1, 3.2 (TV command success feedback)
-        """
-        if not action:
-            return "TV command completed"
-            
-        # Provide user-friendly feedback for different TV actions
-        feedback_map = {
-            '0': 'TV Channel 0 selected',
-            '1': 'TV Channel 1 selected', '2': 'TV Channel 2 selected', '3': 'TV Channel 3 selected',
-            '4': 'TV Channel 4 selected', '5': 'TV Channel 5 selected', '6': 'TV Channel 6 selected',
-            '7': 'TV Channel 7 selected', '8': 'TV Channel 8 selected', '9': 'TV Channel 9 selected',
-            'Red': 'TV Red button pressed',
-            'Green': 'TV Green button pressed',
-            'Yellow': 'TV Yellow button pressed',
-            'Blue': 'TV Blue button pressed',
-            'Info': 'TV Info displayed',
-            'Guide': 'TV Guide opened',
-            'SmartHub': 'TV Smart Hub opened',
-            'List': 'TV Channel List opened'
-        }
-        
-        return feedback_map.get(action, f"TV {action} completed")
     
-    def _get_tv_error_message(self, error_message: str) -> str:
-        """
-        Get TV-specific error message.
-        
-        Args:
-            error_message: The original error message
-            
-        Returns:
-            str: TV-specific error message
-            
-        Requirements: 3.1, 3.2 (TV command error feedback)
-        """
-        if not error_message:
-            return "TV command failed"
-            
-        # Provide user-friendly TV error messages
-        message_lower = error_message.lower()
-        
-        if "not configured" in message_lower or "not found" in message_lower:
-            return "TV device not configured in Harmony Hub"
-        elif "validation failed" in message_lower:
-            return "Invalid TV command - check device configuration"
-        elif "network" in message_lower or "connection" in message_lower:
-            return "TV connection error - check Harmony Hub network"
-        elif "timeout" in message_lower:
-            return "TV response timeout - device may be off or unresponsive"
-        else:
-            return f"TV command error: {error_message}"
+    
+    
+    
 
     def stop(self):
         self._running = False
@@ -1160,14 +945,14 @@ class GUI(QMainWindow):
 
     def create_tv_command(self, action):
         """Create TV command using dynamic device resolution"""
-        tv_alias, tv_device = find_tv_device()
+        tv_alias, tv_device = find_tv_device(DEVICES)
         if tv_device:
             return f"{tv_alias} {action}"
         return None
 
     def is_tv_device_available(self):
         """Check if TV device is available in configuration"""
-        tv_alias, tv_device = find_tv_device()
+        tv_alias, tv_device = find_tv_device(DEVICES)
         return tv_device is not None
 
     def get_tv_unavailable_message(self):
@@ -1180,326 +965,65 @@ class GUI(QMainWindow):
         layout.addWidget(lbl)
 
     def run(self, cmd):
-        # Parsa il comando per separare azione se necessario
+        """Parse and dispatch a command string."""
         parts = cmd.split(maxsplit=1)
         command = parts[0]
         action = parts[1] if len(parts) > 1 else None
         
         # Check for TV device availability before processing TV commands
-        if self._is_tv_command(command, action):
-            if not self.is_tv_device_available():
-                # Show TV unavailable error immediately
-                self.status.setText("❌ TV device not configured")
-                self.status.setStyleSheet(f"QLabel#Status {{ color: {C['danger']}; border-color: {C['danger']}; }}")
-                # Return to real state after 3 seconds
-                QTimer.singleShot(3000, self.update_status)
-                return
+        if self._is_tv_command(command, action) and not self.is_tv_device_available():
+            self.status.setText("❌ TV device not configured")
+            self.status.setStyleSheet(f"QLabel#Status {{ color: {C['danger']}; border-color: {C['danger']}; }}")
+            QTimer.singleShot(3000, self.update_status)
+            return
         
-        # Queue command through StateManager for centralized coordination and sequential processing (Requirement 4.3, 1.1)
-        if hasattr(self, 'state_manager'):
-            # Ensure sequential processing by checking current state
-            current_state = self.state_manager.get_state_info()
-            
-            # Log command attempt for debugging sequential processing
-            print(f"Attempting to queue command: {command} {action or ''} "
-                  f"(current queue: {current_state['pending_commands']}, processing: {current_state['is_processing']})")
-            
-            command_queued = self.state_manager.queue_command(command, action)
-            if not command_queued:
-                # Command was blocked - show error immediately
-                self.status.setText("❌ Comando bloccato - attività in corso")
-                self.status.setStyleSheet(f"QLabel#Status {{ color: {C['danger']}; border-color: {C['danger']}; }}")
-                # Return to real state after 3 seconds (Requirement 4.5)
-                QTimer.singleShot(3000, self.update_status)
-                return
-            
-            # Verify sequential processing order is maintained
-            if not self.state_manager.ensure_sequential_processing():
-                print("WARNING: Sequential processing order issue detected after queueing command")
-            
-            # Log successful queueing
-            updated_state = self.state_manager.get_state_info()
-            print(f"Command queued successfully: {command} {action or ''} "
-                  f"(new queue size: {updated_state['pending_commands']})")
-        else:
-            # Fallback if StateManager not available - show immediate feedback
-            self.status.setText("🚀 Elaborazione...")
-            self.status.setStyleSheet(f"QLabel#Status {{ color: {C['active']}; border-color: {C['active']}; }}")
+        # Queue command through StateManager
+        if not self.state_manager.queue_command(command, action):
+            self.status.setText("❌ Comando bloccato - attività in corso")
+            self.status.setStyleSheet(f"QLabel#Status {{ color: {C['danger']}; border-color: {C['danger']}; }}")
+            QTimer.singleShot(3000, self.update_status)
+            return
         
-        # Send command to worker for sequential processing
         self.worker.queue_command(command, action)
 
     def _is_tv_command(self, command, action):
         """Check if a command is a TV-specific command"""
-        tv_alias, tv_device = find_tv_device()
-        if tv_alias and command == tv_alias:
-            return True
-        
-        # Also check for common TV command patterns
-        tv_actions = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 
-                     'Red', 'Green', 'Yellow', 'Blue', 
-                     'Info', 'Guide', 'SmartHub', 'List']
-        
-        # Check if this looks like a TV command based on action
-        if action and action in tv_actions:
-            return True
-            
-        return False
+        return is_tv_device(DEVICES, command) or is_tv_action(action)
     
-    def _is_tv_command_result(self, cmd):
-        """
-        Check if a command result is from a TV command.
-        
-        Args:
-            cmd: The command string (e.g., "tv_samsung 1")
-            
-        Returns:
-            bool: True if this is a TV command result
-            
-        Requirements: 3.1, 3.2 (TV command feedback identification)
-        """
+    def _is_tv_command_from_str(self, cmd):
+        """Check if a command string (e.g. 'tv_samsung 1') is a TV command."""
         if not cmd:
             return False
-            
-        tv_alias, tv_device = find_tv_device()
-        
-        # Check if command starts with TV device alias
-        if tv_alias and cmd.startswith(tv_alias):
-            return True
-        
-        # Fallback: check for common TV command patterns
         parts = cmd.split(maxsplit=1)
-        if len(parts) == 2:
-            device, action = parts
-            tv_actions = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 
-                         'Red', 'Green', 'Yellow', 'Blue', 
-                         'Info', 'Guide', 'SmartHub', 'List']
-            return action in tv_actions
-            
-        return False
+        return is_tv_device(DEVICES, parts[0]) or (len(parts) > 1 and is_tv_action(parts[1]))
     
-    def _is_tv_command_by_parts(self, command, action):
-        """
-        Check if a command is a TV command by its parts.
-        
-        Args:
-            command: The device command part
-            action: The action part
-            
-        Returns:
-            bool: True if this is a TV command
-            
-        Requirements: 3.1, 3.2 (TV command feedback identification)
-        """
-        tv_alias, tv_device = find_tv_device()
-        
-        # Check if command matches TV device alias
-        if tv_alias and command == tv_alias:
-            return True
-        
-        # Fallback: check for common TV command patterns
-        if action:
-            tv_actions = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 
-                         'Red', 'Green', 'Yellow', 'Blue', 
-                         'Info', 'Guide', 'SmartHub', 'List']
-            return action in tv_actions
-            
-        return False
     
-    def _extract_tv_action(self, cmd):
-        """
-        Extract the TV action from a command string.
-        
-        Args:
-            cmd: The command string (e.g., "tv_samsung 1")
-            
-        Returns:
-            str: The TV action if found, None otherwise
-            
-        Requirements: 3.1, 3.2 (TV command feedback enhancement)
-        """
-        if not cmd:
-            return None
-            
-        parts = cmd.split(maxsplit=1)
-        if len(parts) == 2:
-            return parts[1]
-            
-        return None
     
-    def _get_tv_success_feedback(self, action):
-        """
-        Get TV-specific success feedback message.
-        
-        Args:
-            action: The TV action that succeeded
-            
-        Returns:
-            str: TV-specific success message
-            
-        Requirements: 3.1, 3.2 (TV command success feedback)
-        """
-        if not action:
-            return "TV command completed"
-            
-        # Provide user-friendly feedback for different TV actions
-        feedback_map = {
-            '0': 'TV Channel 0',
-            '1': 'TV Channel 1', '2': 'TV Channel 2', '3': 'TV Channel 3',
-            '4': 'TV Channel 4', '5': 'TV Channel 5', '6': 'TV Channel 6',
-            '7': 'TV Channel 7', '8': 'TV Channel 8', '9': 'TV Channel 9',
-            'Red': 'TV Red Button',
-            'Green': 'TV Green Button',
-            'Yellow': 'TV Yellow Button',
-            'Blue': 'TV Blue Button',
-            'Info': 'TV Info',
-            'Guide': 'TV Guide',
-            'SmartHub': 'TV Smart Hub',
-            'List': 'TV Channel List'
-        }
-        
-        return feedback_map.get(action, f"TV {action}")
     
-    def _get_tv_error_feedback(self, message):
-        """
-        Get TV-specific error feedback message.
-        
-        Args:
-            message: The error message
-            
-        Returns:
-            str: TV-specific error message
-            
-        Requirements: 3.1, 3.2 (TV command error feedback)
-        """
-        if not message:
-            return "TV command failed"
-            
-        # Provide user-friendly TV error messages
-        message_lower = message.lower()
-        
-        if "not configured" in message_lower or "not found" in message_lower:
-            return "TV not configured"
-        elif "validation failed" in message_lower:
-            return "Invalid TV command"
-        elif "network" in message_lower or "connection" in message_lower:
-            return "TV connection error"
-        elif "timeout" in message_lower:
-            return "TV response timeout"
-        else:
-            return "TV command error"
     
-    def _enhance_tv_status_message(self, status_text):
-        """
-        Enhance status messages for TV commands.
-        
-        Args:
-            status_text: The original status text
-            
-        Returns:
-            str: Enhanced status text with TV-specific improvements
-            
-        Requirements: 3.1, 3.2 (TV command status message enhancement)
-        """
-        if not status_text:
-            return status_text
-            
-        # Enhance TV-related status messages
-        if "TV" in status_text:
-            # Already TV-specific, return as-is
-            return status_text
-        elif "samsung" in status_text.lower():
-            # Replace generic device name with TV-specific label
-            return status_text.replace("samsung", "TV").replace("Samsung", "TV")
-        elif any(action in status_text for action in ['Red', 'Green', 'Yellow', 'Blue', 'Info', 'Guide', 'SmartHub', 'List']):
-            # Add TV context to color/function button feedback
-            return f"📺 {status_text}"
-        elif any(num in status_text for num in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']) and len(status_text) < 10:
-            # Add TV context to number button feedback
-            return f"📺 {status_text}"
-        
-        return status_text
     
-    def _contains_tv_feedback(self, status_text):
-        """
-        Check if status text contains TV-related feedback.
-        
-        Args:
-            status_text: The status text to check
-            
-        Returns:
-            bool: True if status contains TV feedback
-            
-        Requirements: 3.1, 3.2 (TV command feedback detection)
-        """
-        if not status_text:
-            return False
-            
-        tv_indicators = ['TV', 'samsung', 'Red', 'Green', 'Yellow', 'Blue', 
-                        'Info', 'Guide', 'SmartHub', 'List', '📺']
-        
-        return any(indicator in status_text for indicator in tv_indicators)
+    
+    
+    
+    
+    
+    
     
     def on_done(self, cmd, res):
-        """
-        Handle command completion with enhanced TV command feedback integration.
-        
-        Requirements: 3.1, 3.2 (TV command feedback integration with StateManager)
-        """
+        """Handle command completion."""
         if "error" in res:
-            # Enhanced error handling with specific TV command feedback
             error_msg = res.get('error', 'Unknown error')
+            parts = cmd.split(maxsplit=1)
+            command = parts[0] if parts else cmd
+            action = parts[1] if len(parts) > 1 else None
             
-            # Check if this is a TV command for specialized feedback
-            if self._is_tv_command_result(cmd):
-                # Provide TV-specific error feedback
-                if "not found" in error_msg.lower() or "not configured" in error_msg.lower():
-                    tv_error = "TV device not configured"
-                elif "validation failed" in error_msg.lower():
-                    tv_error = "Invalid TV command"
-                elif "network" in error_msg.lower() or "connection" in error_msg.lower():
-                    tv_error = "TV connection failed"
-                elif "timeout" in error_msg.lower():
-                    tv_error = "TV command timeout"
-                else:
-                    tv_error = "TV command failed"
-                
-                # Log TV-specific error for debugging
-                print(f"TV command failed: {cmd} - {error_msg}")
-                
-                # Let StateManager handle the error display with TV-specific message
-                if hasattr(self, 'state_manager'):
-                    # Use StateManager's enhanced error handling for TV commands
-                    self.state_manager.handle_command_error(
-                        cmd.split()[0] if ' ' in cmd else cmd,
-                        cmd.split()[1] if ' ' in cmd else None,
-                        tv_error
-                    )
+            if self._is_tv_command_from_str(cmd):
+                self.state_manager.handle_command_error(command, action, get_tv_error_message(error_msg))
             else:
-                # Non-TV command error - use standard error handling
-                print(f"Command failed: {cmd} - {error_msg}")
-                
-                # StateManager will handle showing the error and returning to real state
-                # We don't override StateManager's error handling with our own error display
-            
+                # StateManager handles error display and return to real state
+                pass
         else:
-            # Success - Enhanced feedback for TV commands
-            if self._is_tv_command_result(cmd):
-                # Provide TV-specific success feedback
-                tv_action = self._extract_tv_action(cmd)
-                if tv_action:
-                    print(f"TV command completed successfully: {tv_action}")
-                    
-                    # Show brief TV-specific success feedback through StateManager
-                    if hasattr(self, 'state_manager'):
-                        # Update StateManager with TV command success
-                        # StateManager will coordinate the feedback display timing
-                        pass  # StateManager handles completion feedback automatically
-                else:
-                    print(f"TV command completed successfully: {cmd}")
-            else:
-                # Non-TV command success
-                print(f"Command completed successfully: {cmd}")
+            print(f"Command completed: {cmd}")
             
             # The StateManager handles:
             # 1. Showing completion feedback (including TV-specific feedback)
@@ -1520,78 +1044,36 @@ class GUI(QMainWindow):
         print(f"Command progress: {cmd_display} - {progress_message}")
     
     def on_command_completed(self, command, action, success, message):
-        """
-        Handle command completed signal from HarmonyWorker with enhanced TV command feedback.
-        
-        Requirements: 3.1, 3.2 (TV command feedback integration)
-        """
-        # This provides final completion status with TV command specialization
+        """Handle command completed signal from HarmonyWorker."""
         cmd_display = f"{command} {action}".strip()
-        status = "completed" if success else "failed"
-        
-        # Enhanced feedback for TV commands
-        if self._is_tv_command_by_parts(command, action):
-            if success:
-                # TV command success - provide specific feedback
-                tv_feedback = self._get_tv_success_feedback(action)
-                print(f"TV command {status}: {tv_feedback}")
-                
-                # Integrate with StateManager for consistent TV command feedback
-                if hasattr(self, 'state_manager'):
-                    # StateManager will handle the success display timing and coordination
-                    # We can enhance the message if needed
-                    pass
-            else:
-                # TV command failure - provide specific error context
-                tv_error = self._get_tv_error_feedback(message)
-                print(f"TV command {status}: {tv_error}")
-                
-                # StateManager will handle error display with TV-specific context
+        if self._is_tv_command(command, action):
+            feedback = TV_SUCCESS_FEEDBACK.get(action, f"TV {action}") if success else get_tv_error_message(message)
+            print(f"TV command {'completed' if success else 'failed'}: {feedback}")
         else:
-            # Non-TV command - standard feedback
-            print(f"Command {status}: {cmd_display} - {message}")
+            print(f"Command {'completed' if success else 'failed'}: {cmd_display} - {message}")
     
     def on_state_status_changed(self, status_text, color):
-        """
-        Handle status changes from StateManager with enhanced TV command feedback support.
-        
-        Requirements: 3.1, 3.2 (TV command status messages integration)
-        """
-        # Update status display with centralized state information
-        # This handles immediate feedback and queue size display (Requirements 4.1, 4.2)
-        # Enhanced to support TV command specific status messages
-        
-        # If status_text is empty, it means we should update to real state
+        """Handle status changes from StateManager."""
         if not status_text:
             self.update_status()
         else:
-            # Check if this is TV command feedback and enhance the display
-            enhanced_status = self._enhance_tv_status_message(status_text)
-            
-            self.status.setText(enhanced_status)
+            self.status.setText(status_text)
             self.status.setStyleSheet(f"QLabel#Status {{ color: {color}; border-color: {color}; }}")
-            
-            # Log TV command status updates for debugging
-            if "TV" in enhanced_status or self._contains_tv_feedback(enhanced_status):
-                print(f"TV command status update: {enhanced_status}")
     
     def on_buttons_state_changed(self, enabled):
         """Handle button state changes from StateManager"""
         # Enable/disable activity buttons based on StateManager state (Requirement 4.3)
         # Activity buttons should be disabled when an activity change is in progress
         
-        if hasattr(self, 'activity_buttons'):
-            for button in self.activity_buttons:
-                button.setDisabled(not enabled)
+        for button in self.activity_buttons:
+            button.setDisabled(not enabled)
         
-        # Also manage the power off button - it should be disabled during activity changes
-        # but not when the system is actually off
-        if hasattr(self, 'btn_off'):
-            # Only disable if it's due to activity blocking, not because system is off
-            if not enabled and not self.status.text().startswith("⚫"):
-                self.btn_off.setDisabled(True)
-            elif enabled:
-                self.btn_off.setDisabled(False)
+        # Also manage the power off button
+        # Only disable if it's due to activity blocking, not because system is off
+        if not enabled and not self.status.text().startswith("⚫"):
+            self.btn_off.setDisabled(True)
+        elif enabled:
+            self.btn_off.setDisabled(False)
     
     def on_queue_size_changed(self, queue_size):
         """Handle queue size changes from StateManager"""
@@ -1602,7 +1084,7 @@ class GUI(QMainWindow):
     
     def update_status(self):
         # Check with StateManager if timer updates are allowed (Requirement 3.3)
-        if hasattr(self, 'state_manager'):
+        if self.state_manager:
             if not self.state_manager.request_status_update():
                 # Timer update blocked - reschedule for later
                 QTimer.singleShot(2000, self.update_status)  # Try again in 2 seconds
@@ -1612,7 +1094,7 @@ class GUI(QMainWindow):
     
     def on_status(self, status_text):
         # Update current activity in StateManager
-        if hasattr(self, 'state_manager'):
+        if self.state_manager:
             # Extract activity from status text for StateManager - dynamic matching
             activity_name = "unknown"
             if "OFF" in status_text or "-1" in status_text:
@@ -1643,8 +1125,7 @@ class GUI(QMainWindow):
         is_off = "OFF" in status_text or "-1" in status_text
         
         # Power off button should be disabled when system is already off
-        if hasattr(self, 'btn_off'):
-            self.btn_off.setDisabled(is_off)
+        self.btn_off.setDisabled(is_off)
         
         # Update status display with proper formatting - dynamic matching
         # Only if StateManager allows it (not during activity changes)
@@ -1681,7 +1162,7 @@ class GUI(QMainWindow):
         This method can be called to attempt recovery after an error.
         Requirements: 1.4 (error handling)
         """
-        if hasattr(self, 'state_manager'):
+        if self.state_manager:
             self.state_manager.recover_from_error()
         
         # Force a status update to get real state
