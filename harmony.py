@@ -522,51 +522,19 @@ async def main():
                 print(f"   {_stats(times)}")
                 print()
                 
-                # 3. Device press+release breakdown (5x Mute toggle)
+                # 3. Device command via send_device_fast (10x Mute toggle)
                 if audio_device:
-                    t_press, t_sleep, t_release, t_total = [], [], [], []
-                    for _ in range(5):
-                        action = {"command": "Mute", "type": "IRCommand", "deviceId": audio_device["id"]}
-                        action_json = json.dumps(action)
-                        
+                    times = []
+                    for _ in range(10):
                         t0 = _t.perf_counter()
-                        # Press
-                        tp0 = _t.perf_counter()
-                        cmd_press = {"hubId": REMOTE_ID, "timeout": 10, "hbus": {
-                            "cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?holdAction",
-                            "id": "0", "params": {"status": "press", "timestamp": "0",
-                                                  "verb": "render", "action": action_json}}}
-                        await hub._send_ws_fast(cmd_press, timeout=0.2)
-                        tp1 = _t.perf_counter()
-                        t_press.append((tp1 - tp0) * 1000)
-                        
-                        # Sleep
-                        ts0 = _t.perf_counter()
-                        await asyncio.sleep(0.05)
-                        ts1 = _t.perf_counter()
-                        t_sleep.append((ts1 - ts0) * 1000)
-                        
-                        # Release
-                        import copy
-                        cmd_release = copy.deepcopy(cmd_press)
-                        cmd_release["hbus"]["params"]["status"] = "release"
-                        tr0 = _t.perf_counter()
-                        await hub._send_ws_fast(cmd_release, timeout=0.2)
-                        tr1 = _t.perf_counter()
-                        t_release.append((tr1 - tr0) * 1000)
-                        
-                        t_total.append((_t.perf_counter() - t0) * 1000)
-                        
-                        # Unmute
+                        await hub.send_device_fast(audio_device["id"], "Mute")
+                        times.append((_t.perf_counter() - t0) * 1000)
                         await asyncio.sleep(0.3)
                         await hub.send_device_fast(audio_device["id"], "Mute")
                         await asyncio.sleep(0.3)
-                    
-                    print(f"📊 Device command breakdown (5x Mute):")
-                    print(f"   Press:   {' / '.join(f'{t:.0f}ms' for t in t_press)}  → {_stats(t_press)}")
-                    print(f"   Sleep:   {' / '.join(f'{t:.0f}ms' for t in t_sleep)}  → {_stats(t_sleep)}")
-                    print(f"   Release: {' / '.join(f'{t:.0f}ms' for t in t_release)}  → {_stats(t_release)}")
-                    print(f"   Total:   {' / '.join(f'{t:.0f}ms' for t in t_total)}  → {_stats(t_total)}")
+                    print(f"📊 Device send_device_fast (10x Mute):")
+                    print(f"   {' / '.join(f'{t:.0f}ms' for t in times)}")
+                    print(f"   {_stats(times)}")
                     print()
                 
                 # 4. Config retrieval (3x)
