@@ -129,9 +129,8 @@ class HarmonyWorker(QThread):
             await self.hub.connect()
             
             while self._running:
-                # Attende comandi dalla coda
                 try:
-                    cmd_data = await asyncio.wait_for(self._cmd_queue.get(), timeout=1.0)
+                    cmd_data = await asyncio.wait_for(self._cmd_queue.get(), timeout=30.0)
                     cmd_type, args = cmd_data
                     
                     if cmd_type == "stop":
@@ -142,8 +141,9 @@ class HarmonyWorker(QThread):
                         await self._handle_status()
                         
                 except asyncio.TimeoutError:
-                    # Keepalive / status update periodico se necessario
-                    pass
+                    # Keepalive: ping WebSocket to prevent Hub from closing connection
+                    if self.hub._ws and not self.hub._ws.closed:
+                        await self.hub._ws.ping()
                 except Exception as e:
                     print(f"Error in worker loop: {e}")
 

@@ -9,7 +9,6 @@ import aiohttp
 import json
 import argparse
 import sys
-import uuid
 import random
 import functools
 from typing import Dict, Callable, Any
@@ -89,6 +88,7 @@ class FastHarmonyHub:
         self._connected = False
         self._ws = None
         self._verbose_logging = verbose_logging
+        self._msg_counter = 0
 
     @network_retry(max_attempts=3, base_delay=0.5, max_delay=5.0)
     async def connect(self):
@@ -120,9 +120,8 @@ class FastHarmonyHub:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
     
-    @network_retry(max_attempts=3, base_delay=0.5, max_delay=5.0)
     async def _send_ws_fast(self, command: Dict, timeout: float = 10) -> Dict:
-        """Invio WebSocket ultra-veloce con filtro ID e retry automatico"""
+        """Invio WebSocket ultra-veloce con filtro ID"""
         try:
             # Assicura connessione
             if not self._connected or self._ws is None or self._ws.closed:
@@ -130,7 +129,8 @@ class FastHarmonyHub:
 
             # Assicura ID univoco se non presente
             if "id" not in command or command["id"] == "0":
-                msg_id = str(uuid.uuid4())
+                self._msg_counter += 1
+                msg_id = str(self._msg_counter)
                 command["id"] = msg_id
                 if "hbus" in command:
                     command["hbus"]["id"] = msg_id
@@ -485,6 +485,71 @@ async def main():
                 except ImportError:
                     print("❌ Discovery handlers non disponibili")
                     return
+
+            # 📊 BENCHMARK
+            elif cmd == "benchmark":
+                import time as _t
+                audio_alias, audio_device = find_audio_device(DEVICES)
+                
+                print("╭─────────────────────────────────────────╮")
+                print("│        ⚡ HARMONY HUB BENCHMARK         │")
+                print("╰─────────────────────────────────────────╯")
+                print()
+                
+                # 1. Status (round-trip)
+                times = []
+                for i in range(5):
+                    t0 = _t.perf_counter()
+                    await hub.get_current_fast()
+                    times.append((_t.perf_counter() - t0) * 1000)
+                avg = sum(times) / len(times)
+                print(f"📊 Status (getCurrentActivity):")
+                print(f"   {' / '.join(f'{t:.0f}ms' for t in times)}")
+                print(f"   avg: {avg:.0f}ms  min: {min(times):.0f}ms  max: {max(times):.0f}ms")
+                print()
+                
+                # 2. Device command (press+release) if audio device available
+                if audio_device:
+                    times = []
+                    for i in range(3):
+                        t0 = _t.perf_counter()
+                        await hub.send_device_fast(audio_device["id"], "Mute", use_press_release=True)
+                        times.append((_t.perf_counter() - t0) * 1000)
+                        await asyncio.sleep(0.3)  # unmute
+                        await hub.send_device_fast(audio_device["id"], "Mute", use_press_release=True)
+                        await asyncio.sleep(0.3)
+                    avg = sum(times) / len(times)
+                    print(f"📊 Device command (press+release Mute):")
+                    print(f"   {' / '.join(f'{t:.0f}ms' for t in times)}")
+                    print(f"   avg: {avg:.0f}ms  min: {min(times):.0f}ms  max: {max(times):.0f}ms")
+                    print()
+                
+                # 3. Raw send_str latency (no response wait)
+                times = []
+                for i in range(5):
+                    t0 = _t.perf_counter()
+                    hub._msg_counter += 1
+                    msg = json.dumps({"hubId": REMOTE_ID, "timeout": 1, "id": str(hub._msg_counter),
+                        "hbus": {"cmd": "vnd.logitech.harmony/vnd.logitech.harmony.engine?getCurrentActivity",
+                                 "id": str(hub._msg_counter), "params": {"verb": "get"}}})
+                    await hub._ws.send_str(msg)
+                    times.append((_t.perf_counter() - t0) * 1000)
+                avg = sum(times) / len(times)
+                print(f"📊 Raw WebSocket send_str:")
+                print(f"   {' / '.join(f'{t:.1f}ms' for t in times)}")
+                print(f"   avg: {avg:.1f}ms  min: {min(times):.1f}ms  max: {max(times):.1f}ms")
+                print()
+                
+                # drain stale responses
+                try:
+                    async with asyncio.timeout(0.5):
+                        async for msg in hub._ws:
+                            if msg.type != aiohttp.WSMsgType.TEXT:
+                                break
+                except asyncio.TimeoutError:
+                    pass
+                
+                print("✅ Benchmark completato")
 
             # 🎯 ATTIVITÀ (Priorità su tutto: se scrivo 'off' voglio spegnere il sistema)
             elif cmd in ACTIVITIES:
