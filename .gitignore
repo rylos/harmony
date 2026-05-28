@@ -30,3 +30,4 @@ config.py
 .amazonq/
 .subagents/
 tmp/
+.directory
