@@ -8,69 +8,23 @@ and adding performance monitoring and metrics collection.
 """
 
 import time
-import asyncio
 import logging
-import functools
-import random
-from typing import Dict, List, Optional, Any, Tuple, Callable
+from typing import Dict, List, Optional, Any, Tuple
 from config_models import ConfigurationParser, HubInfo
 from display_formatter import DisplayFormatter
+from retry_utils import async_retry
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 
-# Network retry mechanism for discovery operations
 def discovery_retry(max_attempts: int = 3, base_delay: float = 0.5, max_delay: float = 5.0):
-    """
-    Decorator for discovery operations with exponential backoff retry logic.
-    
-    Args:
-        max_attempts: Maximum number of retry attempts (default: 3)
-        base_delay: Base delay in seconds for exponential backoff (default: 0.5)
-        max_delay: Maximum delay in seconds between retries (default: 5.0)
-    
-    Returns:
-        Decorated function with retry logic
-    """
-    def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs) -> Any:
-            last_exception = None
-            
-            for attempt in range(max_attempts):
-                try:
-                    return await func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    
-                    # Check if this is a network-related error that should be retried
-                    error_message = str(e).lower()
-                    is_network_error = any(keyword in error_message for keyword in [
-                        'connection', 'timeout', 'network', 'websocket', 'client', 'server'
-                    ])
-                    
-                    # Don't retry on the last attempt or for non-network errors
-                    if attempt == max_attempts - 1 or not is_network_error:
-                        break
-                    
-                    # Calculate exponential backoff delay
-                    delay = min(base_delay * (2 ** attempt), max_delay)
-                    
-                    # Add some jitter to prevent thundering herd
-                    jitter = random.uniform(0, 0.1 * delay)
-                    total_delay = delay + jitter
-                    
-                    # Log retry attempt
-                    logger.debug(f"Discovery operation retry {attempt + 1}/{max_attempts} after {total_delay:.2f}s: {e}")
-                    
-                    await asyncio.sleep(total_delay)
-            
-            # If we get here, all retry attempts failed
-            raise last_exception
-        
-        return wrapper
-    return decorator
+    """Retry decorator for discovery operations (see retry_utils.async_retry)."""
+    return async_retry(
+        max_attempts, base_delay, max_delay,
+        retry_on_message=True,
+        logger=logger,
+    )
 
 
 class PerformanceMonitor:

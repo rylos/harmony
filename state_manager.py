@@ -271,14 +271,9 @@ class StateManager(QObject):
             was_activity_command = self._current_command.command_type == CommandType.ACTIVITY
             
             # If it was an activity command, clear activity changing state
+            # (both on success and failure we stop blocking new activities)
             if was_activity_command:
-                if success:
-                    # Activity completed successfully
-                    self.is_activity_changing = False
-                # If failed, we might want to keep blocking for a shorter time
-                # but for now, clear the state
-                if not success:
-                    self.is_activity_changing = False
+                self.is_activity_changing = False
                     
         self._current_command = None
         self.is_processing = False

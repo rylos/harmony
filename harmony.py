@@ -9,9 +9,7 @@ import aiohttp
 import json
 import argparse
 import sys
-import random
-import functools
-from typing import Dict, Callable, Any
+from typing import Dict
 
 try:
     import config
@@ -20,57 +18,17 @@ except ImportError:
     print("   Please copy 'config.sample.py' to 'config.py' and configure your Hub details.")
     sys.exit(1)
 
-# Network retry mechanism with exponential backoff
-def network_retry(max_attempts: int = 3, base_delay: float = 0.5, max_delay: float = 5.0):
-    """
-    Decorator for network operations with exponential backoff retry logic.
-    
-    Args:
-        max_attempts: Maximum number of retry attempts (default: 3)
-        base_delay: Base delay in seconds for exponential backoff (default: 0.5)
-        max_delay: Maximum delay in seconds between retries (default: 5.0)
-    
-    Returns:
-        Decorated function with retry logic
-    """
-    def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs) -> Any:
-            last_exception = None
-            
-            for attempt in range(max_attempts):
-                try:
-                    return await func(*args, **kwargs)
-                except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError, OSError) as e:
-                    last_exception = e
-                    
-                    # Don't retry on the last attempt
-                    if attempt == max_attempts - 1:
-                        break
-                    
-                    # Calculate exponential backoff delay
-                    delay = min(base_delay * (2 ** attempt), max_delay)
-                    
-                    # Add some jitter to prevent thundering herd
-                    jitter = random.uniform(0, 0.1 * delay)
-                    total_delay = delay + jitter
-                    
-                    # Log retry attempt (if verbose logging is available)
-                    if args and hasattr(args[0], '_verbose_logging') and args[0]._verbose_logging:
-                        print(f"🔄 Network error on attempt {attempt + 1}/{max_attempts}, retrying in {total_delay:.2f}s: {e}")
-                    
-                    await asyncio.sleep(total_delay)
-                except Exception as e:
-                    # For non-network errors, don't retry
-                    raise e
-            
-            # If we get here, all retry attempts failed
-            raise last_exception
-        
-        return wrapper
-    return decorator
-
+from retry_utils import async_retry
 from device_helpers import find_device_by_type, find_audio_device, find_tv_device, find_shield_device
+
+
+def network_retry(max_attempts: int = 3, base_delay: float = 0.5, max_delay: float = 5.0):
+    """Retry decorator for FastHarmonyHub network operations (see retry_utils.async_retry)."""
+    return async_retry(
+        max_attempts, base_delay, max_delay,
+        retry_exceptions=(aiohttp.ClientError, asyncio.TimeoutError, ConnectionError, OSError),
+        verbose_attr='_verbose_logging',
+    )
 
 
 # 🔧 CONFIGURATION (Loaded from config.py)
@@ -249,7 +207,11 @@ class FastHarmonyHub:
         return await self._send_ws_fast(command, timeout=3)
 
     async def get_hub_info_fast(self) -> Dict:
-        """Recupera informazioni del Hub ultra-veloce"""
+        """Connectivity probe: returns IP, remote ID and current activity.
+
+        Firmware/model/serial are NOT fetched here (use provision info for those);
+        this only confirms the Hub is reachable and reports the active activity.
+        """
         command = {
             "hubId": REMOTE_ID,
             "timeout": 10,

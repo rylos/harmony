@@ -483,12 +483,6 @@ class HarmonyWorker(QThread):
             for info in DEVICES.values()
         )
 
-    
-    
-    
-    
-    
-
     def stop(self):
         self._running = False
         if self.loop:
@@ -996,19 +990,7 @@ class GUI(QMainWindow):
             return False
         parts = cmd.split(maxsplit=1)
         return is_tv_device(DEVICES, parts[0]) or (len(parts) > 1 and is_tv_action(parts[1]))
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+
     def on_done(self, cmd, res):
         """Handle command completion."""
         if "error" in res:
