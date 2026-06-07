@@ -33,14 +33,14 @@ pip install -r requirements.txt
 - **State Management**: Centralized state coordination via StateManager with Qt signals
 - **Command Pattern**: Commands queued and processed sequentially (CommandType enum: ACTIVITY, DEVICE, AUDIO)
 - **Observer Pattern**: Qt signals for UI updates
-- **Retry Pattern**: Network operations with exponential backoff (`network_retry` decorator)
+- **Retry Pattern**: Shared `retry_utils.async_retry` (exponential backoff). `network_retry` (harmony) and `discovery_retry` (discovery_handlers) are thin wrappers. Retries network errors only; device/IR commands are NOT retried (avoid double-firing IR).
 - **Context Manager**: `FastHarmonyHub` supports async context manager (`__aenter__`/`__aexit__`)
 - **Persistent Connections**: WebSocket connection reuse with keepalive ping (30s)
 - **Fire-and-forget Release**: IR release commands sent without awaiting response
 - **Integer Message IDs**: Counter-based IDs instead of UUID for speed
-- **Shared Helpers**: `device_helpers.py` centralizes device detection and TV constants
+- **Shared Helpers**: `device_helpers.py` (device detection/TV constants), `retry_utils.py` (retry decorator)
 
 ## No Build/Test/Lint Tools Configured
 - No pyproject.toml, setup.py, or setup.cfg
-- No test files present
-- No linting or formatting configuration
+- No test files present (a prior test suite was removed)
+- No linting or formatting configuration; `ruff`/`pyflakes`/`pytest` not installed in `harmony_env`
