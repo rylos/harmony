@@ -35,7 +35,7 @@ pip install -r requirements.txt
 - **Observer Pattern**: Qt signals for UI updates
 - **Retry Pattern**: Shared `retry_utils.async_retry` (exponential backoff). `network_retry` (harmony) and `discovery_retry` (discovery_handlers) are thin wrappers. Retries network errors only; device/IR commands are NOT retried (avoid double-firing IR).
 - **Context Manager**: `FastHarmonyHub` supports async context manager (`__aenter__`/`__aexit__`)
-- **Persistent Connections**: WebSocket connection reuse with keepalive ping (30s)
+- **Persistent Connections**: WebSocket connection reuse with keepalive ping (30s). GUI worker auto-reconnects: retries connect() every 5s if Hub unreachable (emits "❌ Hub non raggiungibile"), reconnects after failed keepalive ping. `FastHarmonyHub.close()` resets session/_ws so reconnection works.
 - **Fire-and-forget Release**: IR release commands sent without awaiting response
 - **Integer Message IDs**: Counter-based IDs instead of UUID for speed
 - **Shared Helpers**: `device_helpers.py` (device detection/TV constants), `retry_utils.py` (retry decorator)

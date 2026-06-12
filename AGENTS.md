@@ -64,7 +64,7 @@ config.sample.py            → Template di config.py.
 
 - **Lingua**: codice e commenti in italiano (messaggi utente, docstring interni). Nomi di classi/metodi in inglese (PascalCase classi, snake_case metodi).
 - **Async**: tutta la comunicazione Hub via `asyncio` + `aiohttp`. Usa `async with FastHarmonyHub() as hub`.
-- **Error handling**: decorator `@network_retry` su `connect()`; retry su ClientError/TimeoutError/ConnectionError. Fallback fire-and-forget su comandi che l'Hub ignora (release).
+- **Error handling**: decorator `@network_retry` su `connect()`; retry su ClientError/TimeoutError/ConnectionError. Fallback fire-and-forget su comandi che l'Hub ignora (release). Il worker GUI non muore se il Hub è irraggiungibile: ritenta la connessione ogni 5s e si riconnette se il keepalive ping fallisce.
 - **Config**: import diretta di `config.py` (non YAML/JSON). Se manca, exit con messaggio d'errore.
 - **Press/Release**: simulazione pulsante reale — invia `press`, attesa 20ms, invia `release` (fire-and-forget). `--no-press-release` per modalità legacy.
 - **UI**: tema Tokyo Night definito in `harmony_gui.py` come dict `C`: bg=`#1a1b26`, surface=`#24283b`, active=`#7aa2f7`, accent=`#bb9af7`, danger=`#f7768e`, text=`#c0caf5`, subtext=`#565f89`, border=`#414868`. Bottoni con `ModernBtn` (stile custom).

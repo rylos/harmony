@@ -3,10 +3,7 @@
   "mcp": {
     "serena": {
       "type": "local",
-      "command": ["serena", "start-mcp-server"],
-      "environment": {
-        "SERENA_WORKSPACE": "/home/marco/dev/harmony"
-      }
+      "command": ["serena", "start-mcp-server", "--project-from-cwd"]
     }
   }
 }

@@ -5,7 +5,7 @@ harmony/
 ├── harmony.py                    # Core CLI backend (main entry point)
 │   ├── FastHarmonyHub            # WebSocket client class (connect, send commands, get status/config)
 │   ├── network_retry             # Thin wrapper over retry_utils.async_retry (network exceptions)
-│   ├── find_device_by_type/find_audio_device/find_tv_device/find_shield_device  # imported from device_helpers
+│   ├── find_audio_device          # imported from device_helpers (only helper used by CLI)
 │   └── main()                    # CLI entry point (includes benchmark command)
 ├── retry_utils.py                # Shared async retry decorator (NEW)
 │   ├── async_retry               # Configurable exponential-backoff retry decorator
