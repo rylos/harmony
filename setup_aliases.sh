@@ -3,7 +3,7 @@
 echo "🚀 Setup Harmony CLI Aliases"
 echo "============================"
 
-HARMONY_PATH="/home/marco/dev/harmony/harmony.py"
+HARMONY_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/harmony.py"
 
 # Crea alias nel .zshrc
 echo ""

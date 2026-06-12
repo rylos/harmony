@@ -16,7 +16,7 @@ from PyQt6.QtGui import QIcon
 
 from harmony import FastHarmonyHub, DEVICES, ACTIVITIES, AUDIO_COMMANDS
 from device_helpers import (
-    find_audio_device, find_tv_device, find_shield_device, find_climate_device,
+    find_audio_device, find_tv_device, find_shield_device,
     TV_ACTIONS, TV_KEYWORDS, TV_SUCCESS_FEEDBACK,
     is_tv_device, is_tv_action, get_tv_success_message, get_tv_error_message,
 )
@@ -126,29 +126,38 @@ class HarmonyWorker(QThread):
     async def _async_main(self):
         self.hub = FastHarmonyHub()
         try:
-            await self.hub.connect()
-            
             while self._running:
+                # La connessione viene (ri)stabilita ad ogni giro: se il Hub è
+                # irraggiungibile il worker non muore, riprova e avvisa la GUI
+                try:
+                    await self.hub.connect()
+                except Exception as e:
+                    print(f"Connection error: {e}")
+                    self.status_updated.emit("❌ Hub non raggiungibile")
+                    await asyncio.sleep(5.0)
+                    continue
+
                 try:
                     cmd_data = await asyncio.wait_for(self._cmd_queue.get(), timeout=30.0)
                     cmd_type, args = cmd_data
-                    
+
                     if cmd_type == "stop":
                         break
                     elif cmd_type == "command":
                         await self._handle_command(args)
                     elif cmd_type == "status":
                         await self._handle_status()
-                        
+
                 except asyncio.TimeoutError:
                     # Keepalive: ping WebSocket to prevent Hub from closing connection
-                    if self.hub._ws and not self.hub._ws.closed:
-                        await self.hub._ws.ping()
+                    try:
+                        if self.hub._ws and not self.hub._ws.closed:
+                            await self.hub._ws.ping()
+                    except Exception as e:
+                        print(f"Keepalive failed, reconnecting: {e}")
+                        await self.hub.close()
                 except Exception as e:
                     print(f"Error in worker loop: {e}")
-
-        except Exception as e:
-            print(f"Connection error: {e}")
         finally:
             await self.hub.close()
 
@@ -1084,6 +1093,8 @@ class GUI(QMainWindow):
             else:
                 # Try to match status text with activity names from config
                 for alias, activity_info in ACTIVITIES.items():
+                    if not isinstance(activity_info, dict):
+                        continue
                     activity_display_name = activity_info.get('name', '')
                     if activity_display_name and activity_display_name in status_text:
                         activity_name = alias

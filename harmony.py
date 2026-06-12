@@ -19,7 +19,7 @@ except ImportError:
     sys.exit(1)
 
 from retry_utils import async_retry
-from device_helpers import find_device_by_type, find_audio_device, find_tv_device, find_shield_device
+from device_helpers import find_audio_device
 
 
 def network_retry(max_attempts: int = 3, base_delay: float = 0.5, max_delay: float = 5.0):
@@ -69,6 +69,9 @@ class FastHarmonyHub:
             await self._ws.close()
         if self.session:
             await self.session.close()
+        # Azzera i riferimenti così connect() può ricreare sessione e websocket
+        self._ws = None
+        self.session = None
         self._connected = False
 
     async def __aenter__(self):
@@ -174,7 +177,12 @@ class FastHarmonyHub:
                 },
             }
             if self._ws and not self._ws.closed:
-                await self._ws.send_str(json.dumps(cmd_release))
+                try:
+                    await self._ws.send_str(json.dumps(cmd_release))
+                except (aiohttp.ClientError, ConnectionError, OSError):
+                    # Il release è fire-and-forget: se il websocket si chiude
+                    # nel frattempo, segnala solo la disconnessione
+                    self._connected = False
             
             return result
         else:
