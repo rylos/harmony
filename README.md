@@ -20,7 +20,7 @@ Local CLI and desktop remote for the Logitech Harmony Hub. No cloud, no polling:
 - **Auto-discovery** – finds the Hub on the LAN and generates the configuration from it.
 - **CLI + GUI** – script it from the shell or use the Qt6 desktop app, with KDE menu entry and shell aliases.
 
-Works with any hub-based Harmony (Elite, Companion, Smart Control, Ultimate Home/Pro, standalone Hub). Logitech has discontinued the cloud services, but the local API keeps working.
+Works with any hub-based Harmony (Elite, Companion, Smart Control, Ultimate Home/Pro, standalone Hub). The official app and cloud are not needed: everything runs on your LAN.
 
 ## Installation
 
