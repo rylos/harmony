@@ -783,10 +783,11 @@ class GUI(QMainWindow):
         dpad.setSpacing(8)
         
         # Smart commands: "smart_ " + action
-        d_up = self.create_btn("", "smart_ DirectionUp", "▴")
-        d_down = self.create_btn("", "smart_ DirectionDown", "▾")
-        d_left = self.create_btn("", "smart_ DirectionLeft", "◂")
-        d_right = self.create_btn("", "smart_ DirectionRight", "▸")
+        # D-pad con push-and-hold: tenuto premuto scorre liste e menu
+        d_up = self.create_hold_btn("", "smart_ DirectionUp", "▴")
+        d_down = self.create_hold_btn("", "smart_ DirectionDown", "▾")
+        d_left = self.create_hold_btn("", "smart_ DirectionLeft", "◂")
+        d_right = self.create_hold_btn("", "smart_ DirectionRight", "▸")
         d_ok = self.create_btn("OK", "smart_ Select", "")
         
         for b in [d_up, d_down, d_left, d_right, d_ok]:
