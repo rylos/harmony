@@ -37,8 +37,7 @@ harmony/
 - `discovery_handlers.py` uses hub.get_config_fast / get_hub_info_fast / get_provision_info_fast / get_state_digest
 
 ## Branches
-- `main`: version in daily use by the user.
-- `feature/apk-protocol` (2026-09-13): protocol rewrite based on the official APK (events, statedigest, discovery, sleep/channel). Keep main untouched until the user validates.
+- Single branch `main` (the APK-based protocol rewrite was merged fast-forward on 2026-09-13 after the user validated it). For risky changes create a feature branch and let the user merge.
 
 ## Notes
 - No test files in the repo.
