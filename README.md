@@ -40,7 +40,7 @@ pip install -r requirements.txt
 
    ```bash
    ./harmony.py find-hub
-   # ✅ Sala  ip=192.168.1.101  remoteId=8084741  fw=4.15.600 ...
+   # ✅ Living Room  ip=192.168.1.50  remoteId=1234567  fw=4.15.600 ...
    ```
 
 2. Create `config.py` from the template and set `HUB_IP` and `REMOTE_ID`:
