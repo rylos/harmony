@@ -1,223 +1,122 @@
-# 🌃 Harmony Hub Controller - Tokyo Night Edition
+# Harmony Hub Controller
 
-A high-performance hybrid controller (CLI + GUI) for Logitech Harmony Hub devices featuring async WebSocket communication and a modern Qt6 interface.
+Local CLI and desktop remote for the Logitech Harmony Hub. No cloud, no polling: it talks to the Hub over its LAN WebSocket API the same way the official mobile app does.
 
-## ✨ Features
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![PyQt6](https://img.shields.io/badge/GUI-PyQt6-41cd52)
+![Linux](https://img.shields.io/badge/platform-Linux-lightgrey)
+![License GPL-2.0](https://img.shields.io/badge/license-GPL--2.0-orange)
 
-- **🎯 Dual Interface**: Both command-line and graphical user interface
-- **⚡ Async Performance**: WebSocket-based communication optimized for speed  
-- **🌃 Modern UI**: Tokyo Night themed Qt6 interface
-- **🧠 Smart Commands**: Context-aware device control based on active activities
-- **🐧 Linux Desktop Integration**: Menu shortcuts, aliases, and desktop file support
-- **🔍 Auto-Discovery**: Automatically discover and configure your Harmony Hub
+<p align="center">
+  <img src="screenshot.png" width="380" alt="Harmony Hub Controller GUI">
+</p>
 
-## 🚀 Getting Started
+## Features
 
-**New users start here!** This guide will get you up and running in 3 simple steps.
+- **Instant state** – the Hub pushes every change (also from the physical remote); the GUI reflects it in real time, including "starting…" and "stopping…" transitions.
+- **Fast commands** – device keys are sent as press/release like a real remote (~20 ms), activities wait for the Hub's real completion event.
+- **Push-and-hold** – keep volume, D-pad, Back and Exit pressed to repeat, exactly like on the remote.
+- **Smart remote** – navigation keys follow the running activity (TV, media player, receiver).
+- **Auto-discovery** – finds the Hub on the LAN and generates the configuration from it.
+- **CLI + GUI** – script it from the shell or use the Qt6 desktop app, with KDE menu entry and shell aliases.
 
-### Step 1: Install Dependencies
+Works with any hub-based Harmony (Elite, Companion, Smart Control, Ultimate Home/Pro, standalone Hub). Logitech has discontinued the cloud services, but the local API keeps working.
+
+## Installation
+
+Requires Python 3.10+ on Linux.
 
 ```bash
-# Clone the repository
 git clone https://github.com/rylos/harmony.git
 cd harmony
-
-# Create virtual environment
 python3 -m venv harmony_env
 source harmony_env/bin/activate
-
-# Install requirements
 pip install -r requirements.txt
 ```
 
-### Step 2: Create Your Configuration (IMPORTANT!)
+## Configuration
 
-**You MUST create a `config.py` file before using the application.** Use the built-in discovery system:
+1. Find your Hub (works without any configuration):
+
+   ```bash
+   ./harmony.py find-hub
+   # ✅ Sala  ip=192.168.1.101  remoteId=8084741  fw=4.15.600 ...
+   ```
+
+2. Create `config.py` from the template and set `HUB_IP` and `REMOTE_ID`:
+
+   ```bash
+   cp config.sample.py config.py
+   ```
+
+3. Let the Hub fill in activities, devices and commands:
+
+   ```bash
+   ./harmony.py discover        # review what the Hub reports
+   ./harmony.py export-config   # rewrite config.py with your activities and devices
+   ```
+
+`config.py` is git-ignored. Edit the aliases in it to taste (`tv`, `shield`, `onkyo`…): they become the CLI commands and GUI buttons.
+
+## Usage
+
+### GUI
 
 ```bash
-# Discover your Harmony Hub automatically
-python harmony.py discover
-
-# This will show you all available activities and devices
-# Then export the configuration to config.py
-python harmony.py export-config
-```
-
-**What this does:**
-- Scans your network for Harmony Hubs
-- Shows all your activities (Watch TV, Listen to Music, etc.)
-- Shows all your devices (TV, Receiver, etc.) and their commands
-- Creates a `config.py` file with your specific setup
-
-### Step 3: Start Using It!
-
-```bash
-# Launch the GUI (recommended for beginners)
 ./start_harmony_gui.sh
-
-# Or use CLI commands directly
-./harmony.py status                  # Check current status
-./harmony.py <activity_name>         # Start an activity
-./harmony.py <device> <command>      # Send device command
 ```
 
-## 🎮 Usage Examples
+Optional: `./install_to_menu.sh` adds a KDE/XDG menu entry, `./setup_aliases.sh` creates shell aliases.
 
-### Activities
+### CLI
 
-```bash
-./harmony.py guarda_tv        # Start "Watch TV" activity
-./harmony.py shield           # Start "Shield" activity  
-./harmony.py ascolta_musica   # Start "Listen to Music" activity
-./harmony.py off              # Power off everything
-```
+| Command | What it does |
+|---|---|
+| `./harmony.py status` | Current activity (⚫ OFF / 🟢 Shield / ⏳ Starting: TV) |
+| `./harmony.py tv` | Start the activity aliased `tv` and wait for the Hub to finish (`--no-wait` to return at once) |
+| `./harmony.py off` | Power everything off |
+| `./harmony.py onkyo VolumeUp` | Send a device command (`<device alias> <command>`) |
+| `./harmony.py onkyo VolumeUp --hold 2` | Keep a key pressed for 2 s |
+| `./harmony.py vol+` / `vol-` / `mute` | Quick audio commands |
+| `./harmony.py sleep 30` / `sleep off` | Sleep timer |
+| `./harmony.py channel 5` | Change channel in the current activity |
+| `./harmony.py list` | All configured activities, devices and commands |
 
-### Device Commands
+Diagnostics:
 
-```bash
-./harmony.py tv_samsung PowerOn
-./harmony.py onkyo_av_receiver VolumeUp
-./harmony.py nvidia_game_console Home
-```
+| Command | What it does |
+|---|---|
+| `./harmony.py find-hub` | Discover Hubs on the LAN |
+| `./harmony.py ping` | Reachability check |
+| `./harmony.py digest` | Raw Hub state (JSON) |
+| `./harmony.py events` | Print push events live (`--timeout 60`) |
+| `./harmony.py sysinfo` | Firmware, account and discovery info |
+| `./harmony.py show-hub` / `show-activity <id>` / `show-device <id>` | Details from the Hub configuration |
+| `./harmony.py benchmark` | Round-trip timings |
 
-### Quick Audio Controls
+Add `-v` for verbose output.
 
-```bash
-./harmony.py vol+             # Volume up
-./harmony.py vol-             # Volume down
-./harmony.py mute             # Mute/unmute
-```
+## How it works
 
-## 🔧 Discovery & Configuration Commands
+The Hub exposes a JSON-over-WebSocket API on port 8088. The client was modelled on the transport of the official Android app:
 
-Need to reconfigure or explore your setup? Use these commands:
+- one reader task: replies carry an `id`, push events don't;
+- state comes from `connect.statedigest?get` and `connect.stateDigest?notify` events, not from polling;
+- key presses are `holdAction` press/hold/release messages sharing one id and a connection-relative timestamp;
+- keepalive with a WebSocket PING every 45 s, automatic reconnection.
 
-```bash
-python harmony.py discover                    # Show complete hub overview
-python harmony.py show-activity <name>        # Show activity details
-python harmony.py show-device <name>          # Show device details  
-python harmony.py show-hub                    # Show hub information
-python harmony.py export-config               # Generate config.py file
-```
+Full protocol notes, including what was verified on real hardware, are in [`HARMONY_APK_PROTOCOL_ANALYSIS.md`](HARMONY_APK_PROTOCOL_ANALYSIS.md).
 
-## 🖥️ Desktop Integration
+## Troubleshooting
 
-```bash
-# Add to KDE menu
-./install_to_menu.sh
+**`config.py` not found** – run `./harmony.py find-hub`, copy `config.sample.py` to `config.py`, then `export-config`.
 
-# Setup CLI aliases
-./setup_aliases.sh
-```
+**`find-hub` finds nothing** – the PC must be on the same LAN as the Hub (no VLAN/guest network), UDP broadcast to port 5224 and an incoming TCP connection on port 5446 must be allowed by the firewall. As a fallback, read the Hub IP from your router and put it in `config.py` by hand.
 
-## 📁 Project Structure
+**"Hub non raggiungibile" in the GUI** – the app retries every 5 s. Check `./harmony.py ping`; a Hub on 2.4 GHz Wi-Fi with heavy packet loss shows exactly this symptom.
 
-```text
-harmony/
-├── harmony.py                    # Core CLI backend
-├── harmony_gui.py                # Qt6 GUI frontend
-├── state_manager.py              # State management system
-├── config_models.py              # Configuration data models
-├── config_exporter.py            # Configuration export functionality
-├── discovery_handlers.py         # Discovery command handlers
-├── hub_discovery.py              # LAN discovery (UDP 5224 / TCP 5446), no config needed
-├── display_formatter.py          # Output formatting
-├── config.py                     # Your hub configuration (auto-generated)
-├── config.sample.py              # Configuration template
-├── start_harmony_gui.sh          # GUI launcher
-├── install_to_menu.sh            # Desktop integration
-├── setup_aliases.sh              # CLI aliases setup
-├── harmony-hub-controller.desktop # Desktop entry
-├── requirements.txt              # Python dependencies
-└── harmony_env/                  # Python virtual environment
-```
+**Command has no effect but no error** – the Hub does not acknowledge valid IR commands. Verify the command name with `./harmony.py show-device <id>`; unknown names are reported (`Command not found`).
 
-## 🎯 Compatible Hardware
+## License
 
-- Harmony Elite, Companion, Smart Control
-- Harmony Ultimate Home, Pro  
-- Standalone Harmony Hub
-
-## ⚡ Performance Features
-
-The WebSocket client mirrors the transport of the official Logitech Android app
-(see `HARMONY_APK_PROTOCOL_ANALYSIS.md`):
-
-- **Push events instead of polling**: the Hub sends `connect.stateDigest?notify` on every
-  state change (also from the physical remote). The GUI updates instantly; the 60s timer is
-  only a fallback.
-- **Single reader task**: responses (with `id`) resolve futures, events (without `id`) go to
-  a callback. Nothing is dropped.
-- **Press/Release like the app**: both fire-and-forget, same message id, timestamp relative to
-  the connection. A device command takes ~20ms (+100ms grace to catch Hub errors such as
-  `565 Device not found` / `566 Command not found`). `--hold SEC` keeps a key pressed.
-- **Activity start waits for the real completion event** (`startActivityFinished` / state
-  digest `activityStatus=2`), no blind timeout. Use `--no-wait` to return immediately.
-- **Keepalive**: WebSocket PING every 45s (same as the app); automatic reconnection in the GUI.
-- **Hub error codes handled**: `510` (hub booting → retry), `5504` (hub-side timeout),
-  `100`/`200.2` (in progress/async accepted).
-
-### Status & diagnostics
-
-```bash
-./harmony.py status          # state digest: ⚫ OFF / 🟢 Activity / ⏳ Starting: …
-./harmony.py digest          # raw state digest JSON
-./harmony.py events          # print push events live (--timeout 30)
-./harmony.py sysinfo         # systeminfo + discoveryinfo + provisioninfo
-./harmony.py ping            # HTTP reachability check
-./harmony.py find-hub        # UDP discovery, works without config.py
-./harmony.py sleep 30        # sleep timer 30 min (sleep off to cancel)
-./harmony.py channel 5       # change channel in the current activity
-```
-
-## 🛠️ Tech Stack
-
-- **Python 3** - Main programming language
-- **PyQt6** - GUI framework with modern Qt6 interface
-- **aiohttp** - Async HTTP client for WebSocket communication
-- **asyncio** - Asynchronous programming support
-
-## 🆘 Troubleshooting
-
-### "No config.py found" Error
-
-This is the most common issue for new users. You need to create the configuration file:
-
-```bash
-# Make sure your Harmony Hub is on and connected to your network
-python harmony.py discover
-python harmony.py export-config
-```
-
-### Hub Not Found During Discovery
-
-- Ensure your Harmony Hub is powered on and connected to the same network
-- Check that your computer can reach the hub's IP address
-- Try running discovery multiple times (sometimes takes a moment)
-
-### GUI Won't Start
-
-```bash
-# Check if PyQt6 is properly installed
-pip install --upgrade PyQt6
-
-# Try launching directly
-python harmony_gui.py
-```
-
-### Permission Issues with Scripts
-
-```bash
-# Make scripts executable
-chmod +x start_harmony_gui.sh
-chmod +x install_to_menu.sh
-chmod +x setup_aliases.sh
-```
-
-## 📄 License
-
-See LICENSE file for details.
-
----
-
-Built with ❤️ for the Logitech Harmony Hub community
+GPL-2.0. See [LICENSE](LICENSE).
