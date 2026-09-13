@@ -3,55 +3,42 @@
 ```
 harmony/
 ├── harmony.py                    # Core CLI backend (main entry point)
-│   ├── FastHarmonyHub            # WebSocket client class (connect, send commands, get status/config)
+│   ├── FastHarmonyHub            # WebSocket client: reader task, events, statedigest, press/release (see mem:protocol_and_transport)
+│   ├── HubError                  # Exception for hub codes != 200
+│   ├── parse_digest / describe_status / describe_digest / activity_name  # status helpers shared with GUI
 │   ├── network_retry             # Thin wrapper over retry_utils.async_retry (network exceptions)
-│   ├── find_audio_device          # imported from device_helpers (only helper used by CLI)
-│   └── main()                    # CLI entry point (includes benchmark command)
-├── retry_utils.py                # Shared async retry decorator (NEW)
-│   ├── async_retry               # Configurable exponential-backoff retry decorator
-│   └── NETWORK_KEYWORDS          # Keywords to recognize retryable network errors
+│   ├── require_config            # exits with CONFIG_MISSING_MSG if config.py missing (config import is lazy)
+│   ├── _run_activity             # CLI helper: start activity, wait for completion event
+│   └── main()                    # CLI router (activities, devices, audio, status/digest/sysinfo/ping/events, find-hub, sleep, channel, discovery cmds, benchmark)
+├── hub_discovery.py              # LAN discovery: UDP broadcast 5224 → hub connects back on TCP 5446. No config dependency.
+├── retry_utils.py                # Shared async retry decorator
 ├── device_helpers.py             # Shared device detection and constants
-│   ├── TV_ACTIONS, TV_KEYWORDS, AUDIO_KEYWORDS, etc.  # Shared constants
-│   ├── find_device_by_type/find_audio_device/find_tv_device/find_shield_device
-│   └── is_tv_device/is_tv_action/get_tv_success_message/get_tv_error_message
 ├── harmony_gui.py                # Qt6 GUI frontend
-│   ├── HarmonyWorker             # Async worker thread (command/status handling)
-│   ├── ModernBtn                 # Custom styled button
-│   ├── GUI                       # Main window (buttons, status, events)
-│   ├── C                         # Color constants
-│   ├── STYLESHEET                # Tokyo Night theme CSS
-│   └── main()                    # GUI entry point
-├── state_manager.py              # Centralized state management
-│   ├── CommandType / CommandState / UIState  # Enums + dataclasses
-│   └── StateManager              # Queue, classify, process commands; error handling
-├── config_models.py              # Configuration data models
-│   ├── HubInfo, Command, Device, Activity  # Dataclasses with from_dict()
-│   └── ConfigurationParser       # Parse hub config/info/provision responses
-├── config_exporter.py            # Configuration export
-│   └── ConfigExporter            # Generate config.py from discovered data
-├── discovery_handlers.py         # Discovery command handlers
-│   ├── discovery_retry           # Thin wrapper over retry_utils.async_retry (message-based)
-│   ├── PerformanceMonitor        # Measure operation timing
-│   └── DiscoveryHandlers         # discover, show-activity, show-device, show-hub, export-config
-├── display_formatter.py          # Output formatting (DisplayFormatter)
-├── config.py                     # Hub configuration (auto-generated, NOT in git / gitignored)
+│   ├── HarmonyWorker             # QThread + asyncio loop; hub events → status (no polling); signals result_ready, status_updated, hub_event, command_*
+│   ├── ModernBtn, GUI, C, STYLESHEET, main()
+├── state_manager.py              # Centralized state management (StateManager, CommandType/CommandState/UIState)
+├── config_models.py              # HubInfo, Command, Device, Activity, ConfigurationParser
+├── config_exporter.py            # ConfigExporter → config.py
+├── discovery_handlers.py         # discover, show-activity, show-device, show-hub, export-config
+├── display_formatter.py          # DisplayFormatter
+├── config.py                     # Hub configuration (gitignored)
 ├── config.sample.py              # Configuration template
-├── .mcp.json                     # Serena MCP server config (committed)
-├── start_harmony_gui.sh          # GUI launcher script
-├── install_to_menu.sh            # KDE desktop integration
-├── setup_aliases.sh              # CLI aliases setup
-├── harmony-hub-controller.desktop # Desktop entry file
-├── harmony-icon.png              # Application icon
-├── requirements.txt              # Python dependencies
-└── harmony_env/                  # Python virtual environment
+├── HARMONY_APK_PROTOCOL_ANALYSIS.md      # Protocol reference from official APK + real-hub verifications
+├── HARMONY_WEBSOCKET_EVENTS_ANALYSIS.md  # Historical plan for events (now implemented)
+├── DEVICE_COMMANDS.md
+├── .mcp.json, AGENTS.md, start_harmony_gui.sh, install_to_menu.sh, setup_aliases.sh, *.desktop, harmony-icon.png, requirements.txt
+└── harmony_env/                  # venv (gitignored)
 ```
 
 ## Import Dependencies
-- GUI (`harmony_gui.py`) imports from core CLI (`harmony.py`) and `device_helpers`/`state_manager`
-- `harmony.py` and `discovery_handlers.py` both import `async_retry` from `retry_utils` (no duplicated retry code)
-- Discovery system + config exporter import from `config_models`
-- State manager is standalone (used by GUI)
-- Circular imports avoided through careful dependency management
+- `harmony_gui.py` imports from `harmony.py` (FastHarmonyHub, config dicts, describe_status, parse_digest, EVENT_* constants) and `device_helpers`/`state_manager`
+- `harmony.py` and `discovery_handlers.py` import `async_retry` from `retry_utils`
+- `hub_discovery.py` is standalone (stdlib only)
+- `discovery_handlers.py` uses hub.get_config_fast / get_hub_info_fast / get_provision_info_fast / get_state_digest
+
+## Branches
+- `main`: version in daily use by the user.
+- `feature/apk-protocol` (2026-09-13): protocol rewrite based on the official APK (events, statedigest, discovery, sleep/channel). Keep main untouched until the user validates.
 
 ## Notes
-- No test files in the repo. A prior test suite (test_tv_*.py, test_gui_tv_controls.py, etc.) was removed; leftover `.pytest_cache/`/`.hypothesis/` dirs were deleted (both are gitignored).
+- No test files in the repo.

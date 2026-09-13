@@ -301,7 +301,7 @@ class DiscoveryHandlers:
             
             # Test basic connectivity with a status check
             status_result, status_exec_time = await self.performance_monitor.measure_operation(
-                "connectivity_test", self.hub.get_current_fast
+                "connectivity_test", self.hub.get_state_digest
             )
             
             # Create HubInfo object
@@ -329,6 +329,14 @@ class DiscoveryHandlers:
                         current_activity = f"Activity ID: {activity_id}"
                         connectivity_status = "connected"
             
+            # Dati da statedigest/systeminfo/discoveryinfo (get_hub_info_fast)
+            if "data" in hub_result and isinstance(hub_result["data"], dict):
+                hd = hub_result["data"]
+                hub_info.name = hd.get("name") or hub_info.name
+                hub_info.firmware_version = hd.get("firmware_version") or hub_info.firmware_version
+                hub_info.model = hd.get("model") or hub_info.model
+                hub_info.serial_number = hd.get("serial_number") or hub_info.serial_number
+
             # Update hub info with provision data if available
             if "data" in provision_result and isinstance(provision_result["data"], dict):
                 provision_data = provision_result["data"]

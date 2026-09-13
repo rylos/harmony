@@ -120,6 +120,7 @@ harmony/
 ├── config_models.py              # Configuration data models
 ├── config_exporter.py            # Configuration export functionality
 ├── discovery_handlers.py         # Discovery command handlers
+├── hub_discovery.py              # LAN discovery (UDP 5224 / TCP 5446), no config needed
 ├── display_formatter.py          # Output formatting
 ├── config.py                     # Your hub configuration (auto-generated)
 ├── config.sample.py              # Configuration template
@@ -139,11 +140,35 @@ harmony/
 
 ## ⚡ Performance Features
 
-- **Timeouts**: Activity (3.0s), Status (2.0s), IR commands (0.2s)
-- **Press/Release Simulation**: 0.05s delay between press/release
-- **Fire-and-forget**: Optimized for speed over reliability
-- **Persistent Connections**: WebSocket connection reuse
-- **Command Queueing**: Sequential processing with visual feedback
+The WebSocket client mirrors the transport of the official Logitech Android app
+(see `HARMONY_APK_PROTOCOL_ANALYSIS.md`):
+
+- **Push events instead of polling**: the Hub sends `connect.stateDigest?notify` on every
+  state change (also from the physical remote). The GUI updates instantly; the 60s timer is
+  only a fallback.
+- **Single reader task**: responses (with `id`) resolve futures, events (without `id`) go to
+  a callback. Nothing is dropped.
+- **Press/Release like the app**: both fire-and-forget, same message id, timestamp relative to
+  the connection. A device command takes ~20ms (+100ms grace to catch Hub errors such as
+  `565 Device not found` / `566 Command not found`). `--hold SEC` keeps a key pressed.
+- **Activity start waits for the real completion event** (`startActivityFinished` / state
+  digest `activityStatus=2`), no blind timeout. Use `--no-wait` to return immediately.
+- **Keepalive**: WebSocket PING every 45s (same as the app); automatic reconnection in the GUI.
+- **Hub error codes handled**: `510` (hub booting → retry), `5504` (hub-side timeout),
+  `100`/`200.2` (in progress/async accepted).
+
+### Status & diagnostics
+
+```bash
+./harmony.py status          # state digest: ⚫ OFF / 🟢 Activity / ⏳ Starting: …
+./harmony.py digest          # raw state digest JSON
+./harmony.py events          # print push events live (--timeout 30)
+./harmony.py sysinfo         # systeminfo + discoveryinfo + provisioninfo
+./harmony.py ping            # HTTP reachability check
+./harmony.py find-hub        # UDP discovery, works without config.py
+./harmony.py sleep 30        # sleep timer 30 min (sleep off to cancel)
+./harmony.py channel 5       # change channel in the current activity
+```
 
 ## 🛠️ Tech Stack
 

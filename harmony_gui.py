@@ -14,7 +14,11 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
 
-from harmony import FastHarmonyHub, DEVICES, ACTIVITIES, AUDIO_COMMANDS
+from harmony import (
+    FastHarmonyHub, DEVICES, ACTIVITIES, AUDIO_COMMANDS, config as harmony_config,
+    CONFIG_MISSING_MSG, describe_status, parse_digest,
+    EVENT_STATE_DIGEST, EVENT_ACTIVITY_FINISHED, EVENT_CONNECTED, EVENT_DISCONNECTED,
+)
 from device_helpers import (
     find_audio_device, find_tv_device, find_shield_device,
     TV_ACTIONS, TV_KEYWORDS, TV_SUCCESS_FEEDBACK,
@@ -104,6 +108,7 @@ class HarmonyWorker(QThread):
     command_started = pyqtSignal(str, str)  # (command, action)
     command_progress = pyqtSignal(str, str, str)  # (command, action, progress_message)
     command_completed = pyqtSignal(str, str, bool, str)  # (command, action, success, message)
+    hub_event = pyqtSignal(str, object)  # (event_type, data) — eventi push dall'Hub
 
     def __init__(self, state_manager=None):
         super().__init__()
@@ -124,20 +129,25 @@ class HarmonyWorker(QThread):
         self.loop.run_until_complete(self._async_main())
 
     async def _async_main(self):
-        self.hub = FastHarmonyHub()
+        # Gli eventi push dell'Hub (state digest, fine attività, disconnessione)
+        # arrivano dal reader task di FastHarmonyHub sullo stesso loop asyncio
+        self.hub = FastHarmonyHub(event_callback=self._on_hub_event)
         try:
             while self._running:
                 # La connessione viene (ri)stabilita ad ogni giro: se il Hub è
                 # irraggiungibile il worker non muore, riprova e avvisa la GUI
-                try:
-                    await self.hub.connect()
-                except Exception as e:
-                    print(f"Connection error: {e}")
-                    self.status_updated.emit("❌ Hub non raggiungibile")
-                    await asyncio.sleep(5.0)
-                    continue
+                if not self.hub.connected:
+                    try:
+                        await self.hub.connect()
+                    except Exception as e:
+                        print(f"Connection error: {e}")
+                        self.status_updated.emit("❌ Hub non raggiungibile")
+                        await asyncio.sleep(5.0)
+                        continue
 
                 try:
+                    # Il keepalive è gestito da FastHarmonyHub (heartbeat PING 45s):
+                    # qui il timeout serve solo a ricontrollare periodicamente la connessione
                     cmd_data = await asyncio.wait_for(self._cmd_queue.get(), timeout=30.0)
                     cmd_type, args = cmd_data
 
@@ -147,19 +157,46 @@ class HarmonyWorker(QThread):
                         await self._handle_command(args)
                     elif cmd_type == "status":
                         await self._handle_status()
+                    elif cmd_type == "reconnect":
+                        await self.hub.close()
 
                 except asyncio.TimeoutError:
-                    # Keepalive: ping WebSocket to prevent Hub from closing connection
-                    try:
-                        if self.hub._ws and not self.hub._ws.closed:
-                            await self.hub._ws.ping()
-                    except Exception as e:
-                        print(f"Keepalive failed, reconnecting: {e}")
+                    if not self.hub.connected:
                         await self.hub.close()
                 except Exception as e:
                     print(f"Error in worker loop: {e}")
         finally:
             await self.hub.close()
+
+    def _on_hub_event(self, event_type: str, data):
+        """Callback dal reader task (thread del worker): aggiorna lo stato senza polling."""
+        try:
+            self.hub_event.emit(event_type, data)
+            if event_type == EVENT_STATE_DIGEST:
+                self._publish_status(parse_digest(data))
+            elif event_type in (EVENT_ACTIVITY_FINISHED, EVENT_CONNECTED):
+                # Stato completo appena possibile (siamo nel loop: put_nowait diretto)
+                self._cmd_queue.put_nowait(("status", None))
+            elif event_type == EVENT_DISCONNECTED:
+                self.status_updated.emit("❌ Hub non raggiungibile")
+                self._cmd_queue.put_nowait(("reconnect", None))
+        except Exception as e:
+            print(f"Hub event error ({event_type}): {e}")
+
+    def _publish_status(self, st: dict):
+        """Converte lo stato parsato in testo per la GUI e aggiorna lo StateManager."""
+        activity_id = st["activity_id"]
+        status_text = describe_status(st)
+
+        if self.state_manager and not st["transitioning"]:
+            activity_name = "off" if activity_id == "-1" else activity_id
+            for name, info in ACTIVITIES.items():
+                if info["id"] == activity_id:
+                    activity_name = name
+                    break
+            self.state_manager.update_current_activity(activity_name)
+
+        self.status_updated.emit(status_text)
 
     async def _handle_command(self, args):
         cmd, action = args
@@ -232,12 +269,12 @@ class HarmonyWorker(QThread):
             # 0. SMART COMMANDS (Routing dinamico basato sull'attività)
             if cmd.startswith("smart_"):
                 real_cmd = cmd.replace("smart_", "")
-                # Recupera attività corrente
+                # Recupera attività corrente (dall'ultimo digest ricevuto via evento, se c'è)
                 try:
-                    curr = await self.hub.get_current_fast()
-                    act_id = "-1"
-                    if "data" in curr and "result" in curr["data"]:
-                        act_id = curr["data"]["result"]
+                    if self.hub.last_digest:
+                        act_id = parse_digest(self.hub.last_digest)["activity_id"]
+                    else:
+                        act_id = (await self.hub.get_status())["activity_id"]
                 except Exception as e:
                     # Handle network/timeout errors gracefully
                     if self.state_manager:
@@ -418,32 +455,9 @@ class HarmonyWorker(QThread):
         try:
             # Emit progress signal for status check
             self.command_progress.emit("status", "", "Checking current status...")
-            
-            res = await self.hub.get_current_fast()
-            if "data" in res and "result" in res["data"]:
-                activity_id = res["data"]["result"]
-                status_text = "..."
-                if activity_id == "-1":
-                    status_text = "⚫ OFF"
-                else:
-                    for name, info in ACTIVITIES.items():
-                        if info["id"] == activity_id:
-                            status_text = f"🟢 {info['name']}"
-                            break
-                    else:
-                        status_text = f"🟡 ID: {activity_id}"
-                
-                # Update StateManager if available
-                if self.state_manager:
-                    # Extract activity name for StateManager
-                    activity_name = "off" if activity_id == "-1" else activity_id
-                    for name, info in ACTIVITIES.items():
-                        if info["id"] == activity_id:
-                            activity_name = name
-                            break
-                    self.state_manager.update_current_activity(activity_name)
-                
-                self.status_updated.emit(status_text)
+
+            # State digest: è quello che usa l'app ufficiale (include le transizioni)
+            self._publish_status(await self.hub.get_status())
                 
         except asyncio.TimeoutError as e:
             print(f"Status check timed out: {e}")
@@ -914,11 +928,11 @@ class GUI(QMainWindow):
             
         main_layout.addWidget(dev_frame)
         
-        # Init
+        # Init: lo stato arriva via eventi push dell'Hub; il timer è solo un fallback
         self.update_status()
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_status)
-        self.timer.start(10000)
+        self.timer.start(60000)
         self.adjustSize()
 
     def create_btn(self, text, cmd, icon=None):
@@ -1084,6 +1098,13 @@ class GUI(QMainWindow):
         self.worker.queue_status()
     
     def on_status(self, status_text):
+        # Transizione in corso (avvio/spegnimento attività, anche da telecomando fisico):
+        # mostra il testo così com'è senza toccare lo StateManager
+        if status_text.startswith("⏳"):
+            self.status.setText(status_text)
+            self.status.setStyleSheet(f"QLabel#Status {{ color: {C['accent']}; border-color: {C['accent']}; }}")
+            return
+
         # Update current activity in StateManager
         if self.state_manager:
             # Extract activity from status text for StateManager - dynamic matching
@@ -1166,6 +1187,9 @@ class GUI(QMainWindow):
         event.accept()
 
 def main():
+    if harmony_config is None:
+        print(CONFIG_MISSING_MSG)
+        sys.exit(1)
     app = QApplication(sys.argv)
     # Fix per icona KDE/Wayland/X11
     app.setDesktopFileName("harmony-hub-controller") 

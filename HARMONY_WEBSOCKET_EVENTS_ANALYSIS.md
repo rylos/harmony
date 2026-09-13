@@ -1,5 +1,12 @@
 # Harmony Hub WebSocket Events - Analisi e Implementazione
 
+> **Stato (2026-09-13): IMPLEMENTATO** in `FastHarmonyHub` (reader task unico, eventi
+> `connect.stateDigest?notify` / `startActivityFinished`, GUI senza polling).
+> Il protocollo esatto è documentato in `HARMONY_APK_PROTOCOL_ANALYSIS.md`.
+> Il piano sotto è storico: differenze rispetto a quanto implementato: lo stato iniziale
+> si legge con `connect.statedigest?get` (non `getCurrentActivity`) e gli eventi si
+> riconoscono dall'assenza del campo `id`, non dal `cmd`.
+
 ## Data Analisi: 29 Dicembre 2024
 
 ### Domanda Originale
