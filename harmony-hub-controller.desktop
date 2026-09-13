@@ -2,7 +2,7 @@
 Version=1.0
 Type=Application
 Name=Harmony Hub Controller
-Comment=Controllo Logitech Harmony Hub - Tokyo Night
+Comment=Telecomando locale per Logitech Harmony Hub
 Exec=/home/marco/dev/harmony/start_harmony_gui.sh
 Icon=/home/marco/dev/harmony/harmony-icon.png
 Terminal=false
