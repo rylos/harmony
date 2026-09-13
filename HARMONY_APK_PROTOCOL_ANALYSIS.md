@@ -183,7 +183,7 @@ Content-Type: application/json
 
 ## 7. Verifiche sull'Hub reale (firmware 4.15.600, hubId 106 "Pimento") — 2026-09-13
 
-Tutto verificato con il codice del ramo `feature/apk-protocol`:
+Tutto verificato con il codice attuale di `main` (merge del 2026-09-13):
 
 - `connect.statedigest?get` con `{format: "json"}` risponde in ~40 ms con il digest completo.
 - Gli eventi push arrivano con il tipo **`connect.stateDigest?notify`** (D maiuscola) e
@@ -206,7 +206,7 @@ Tutto verificato con il codice del ramo `feature/apk-protocol`:
 
 ## 8. Cosa migliorare in `harmony.py` / GUI (ordinato per impatto) — stato
 
-Tutti i punti sotto sono implementati nel ramo `feature/apk-protocol`, tranne dove indicato.
+Tutti i punti sotto sono implementati in `main` (merge del 2026-09-13), tranne dove indicato.
 
 1. **Stato via eventi, non polling** — sostituire il timer da 10 s e `getCurrentActivity` con `connect.statedigest?get` all'avvio + ascolto di `connect.statedigest?notify` e `startActivityFinished`. Richiede un reader task unico che smisti risposte (con `id`) e eventi (senza `id`), invece del `async for` dentro `_send_ws_fast` che oggi scarta gli eventi.
 2. **Press/release fire-and-forget entrambi** — l'app non aspetta il press. Oggi aspettiamo fino a 0.2 s: togliendolo un comando scende a ~1 ms di latenza percepita. Usare lo stesso `id` per press e release e un `timestamp` reale (ms dalla connessione).
