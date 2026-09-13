@@ -118,6 +118,8 @@ class FastHarmonyHub:
         self._event_waiters: List[Tuple[Callable[[str, Dict], bool], asyncio.Future]] = []
         self.last_digest: Optional[Dict] = None
         self._closing = False
+        # Serializza le send: hold_command può girare in parallelo alle altre richieste
+        self._send_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ connessione
 
@@ -305,7 +307,8 @@ class FastHarmonyHub:
 
     async def _send_raw(self, message: Dict):
         await self._ensure_connected()
-        await self._ws.send_str(json.dumps(message))
+        async with self._send_lock:
+            await self._ws.send_str(json.dumps(message))
 
     async def _send_nowait(self, cmd: str, params: Optional[Dict] = None, msg_id: Optional[str] = None) -> str:
         """Invio fire-and-forget (expectNoResult nell'app). Restituisce l'id usato."""
@@ -326,7 +329,8 @@ class FastHarmonyHub:
         fut = asyncio.get_running_loop().create_future()
         self._pending[msg_id] = fut
         try:
-            await self._ws.send_str(json.dumps(message))
+            async with self._send_lock:
+                await self._ws.send_str(json.dumps(message))
             data = await asyncio.wait_for(fut, timeout)
         except asyncio.TimeoutError:
             self._pending.pop(msg_id, None)
@@ -401,25 +405,38 @@ class FastHarmonyHub:
         finally:
             self._pending.pop(msg_id, None)
 
-    async def send_device_hold(self, device_id: str, command: str, duration: float,
-                               repeat_interval: float = 0.25) -> Dict:
-        """Tasto tenuto premuto: press, poi 'hold' ripetuto, infine release (stesso id)."""
+    async def hold_command(self, device_id: str, command: str, stop: asyncio.Event,
+                           repeat_interval: float = 0.25, max_duration: float = 30.0) -> Dict:
+        """
+        Tasto tenuto premuto fino a stop.set(): press, poi 'hold' ripetuto ogni
+        repeat_interval, infine release (stesso id). max_duration è una sicurezza
+        contro release persi (es. finestra chiusa col tasto premuto).
+        """
         action = self._action_json(device_id, command)
         await self._ensure_connected()
         msg_id = await self._hold_action(action, "press")
-        deadline = time.monotonic() + max(duration, 0)
+        t0 = time.monotonic()
         try:
-            while time.monotonic() < deadline:
-                await asyncio.sleep(min(repeat_interval, max(deadline - time.monotonic(), 0)))
-                if time.monotonic() >= deadline:
+            while not stop.is_set() and time.monotonic() - t0 < max_duration:
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=repeat_interval)
                     break
+                except asyncio.TimeoutError:
+                    pass
                 await self._hold_action(action, "hold", msg_id)
         finally:
             try:
                 await self._hold_action(action, "release", msg_id)
             except (aiohttp.ClientError, ConnectionError, OSError):
                 self._connected = False
-        return {"status": "sent", "id": msg_id, "duration": duration}
+        return {"status": "sent", "id": msg_id, "duration": time.monotonic() - t0}
+
+    async def send_device_hold(self, device_id: str, command: str, duration: float,
+                               repeat_interval: float = 0.25) -> Dict:
+        """Tasto tenuto premuto per `duration` secondi (vedi hold_command)."""
+        stop = asyncio.Event()
+        asyncio.get_running_loop().call_later(max(duration, 0), stop.set)
+        return await self.hold_command(device_id, command, stop, repeat_interval, max_duration=duration + 1)
 
     async def fire_sequence(self, sequence_id: str) -> Dict:
         """Esegue una sequenza Harmony (BaseHub.doFireSequence)."""

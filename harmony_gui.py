@@ -118,6 +118,10 @@ class HarmonyWorker(QThread):
         self._running = True
         self.state_manager = state_manager
         
+        # Push-and-hold state (task separato dalla coda comandi)
+        self._hold_task = None
+        self._hold_stop = None
+
         # Device command throttling state
         self._last_device_command_time = 0.0
         self._device_command_min_interval = 0.05  # 50ms minimum between device commands
@@ -166,6 +170,13 @@ class HarmonyWorker(QThread):
                 except Exception as e:
                     print(f"Error in worker loop: {e}")
         finally:
+            # Chiudi un eventuale hold in corso (invia il release) prima di staccare
+            self._stop_hold()
+            if self._hold_task is not None and not self._hold_task.done():
+                try:
+                    await asyncio.wait_for(self._hold_task, timeout=2.0)
+                except Exception:
+                    pass
             await self.hub.close()
 
     def _on_hub_event(self, event_type: str, data):
@@ -285,42 +296,7 @@ class HarmonyWorker(QThread):
                     raise e
                 
                 # Determina il target device in base all'attività
-                target_dev = None
-                
-                # Mappa ID Attività -> Device ID
-                # Get activity IDs dynamically from config
-                tv_act_id = None
-                shield_act_id = None  
-                music_act_id = None
-                
-                for alias, activity_info in ACTIVITIES.items():
-                    activity_name = activity_info.get('name', '').lower()
-                    if 'tv' in activity_name or 'guarda' in activity_name:
-                        tv_act_id = activity_info.get('id')
-                    elif 'shield' in activity_name:
-                        shield_act_id = activity_info.get('id')
-                    elif 'music' in activity_name or 'ascolta' in activity_name:
-                        music_act_id = activity_info.get('id')
-                
-                # Find appropriate device based on current activity
-                if act_id == tv_act_id:
-                    tv_alias, tv_device = find_tv_device(DEVICES)
-                    if tv_device:
-                        target_dev = tv_device["id"]
-                elif act_id == shield_act_id:
-                    shield_alias, shield_device = find_shield_device(DEVICES)
-                    if shield_device:
-                        target_dev = shield_device["id"]
-                elif act_id == music_act_id:
-                    audio_alias, audio_device = find_audio_device(DEVICES)
-                    if audio_device:
-                        target_dev = audio_device["id"]
-                
-                # Fallback: if we're in TV mode or undefined, try TV device if command is compatible
-                if not target_dev:
-                    tv_alias, tv_device = find_tv_device(DEVICES)
-                    if tv_device:
-                        target_dev = tv_device["id"]
+                target_dev = self._smart_target_device(act_id)
 
                 if target_dev:
                     # Validate smart device command before sending (Requirement 2.2)
@@ -480,6 +456,86 @@ class HarmonyWorker(QThread):
             else:
                 self.status_updated.emit("❌ Error")
 
+    @staticmethod
+    def _smart_target_device(act_id: str):
+        """Device ID su cui inviare un comando 'smart_' in base all'attività corrente."""
+        tv_act_id = shield_act_id = music_act_id = None
+        for alias, activity_info in ACTIVITIES.items():
+            activity_name = activity_info.get('name', '').lower()
+            if 'tv' in activity_name or 'guarda' in activity_name:
+                tv_act_id = activity_info.get('id')
+            elif 'shield' in activity_name:
+                shield_act_id = activity_info.get('id')
+            elif 'music' in activity_name or 'ascolta' in activity_name:
+                music_act_id = activity_info.get('id')
+
+        target_dev = None
+        if act_id == tv_act_id:
+            _, dev = find_tv_device(DEVICES)
+            target_dev = dev["id"] if dev else None
+        elif act_id == shield_act_id:
+            _, dev = find_shield_device(DEVICES)
+            target_dev = dev["id"] if dev else None
+        elif act_id == music_act_id:
+            _, dev = find_audio_device(DEVICES)
+            target_dev = dev["id"] if dev else None
+
+        # Fallback: TV
+        if not target_dev:
+            _, dev = find_tv_device(DEVICES)
+            target_dev = dev["id"] if dev else None
+        return target_dev
+
+    async def _resolve_target(self, cmd: str, action):
+        """(device_id, comando IR) per un comando GUI tenibile premuto: vol+/vol-, smart_ X, <device> X."""
+        cmd = cmd.lower()
+        if cmd in AUDIO_COMMANDS:
+            _, dev = find_audio_device(DEVICES)
+            return (dev["id"] if dev else None), AUDIO_COMMANDS[cmd]
+        if cmd.startswith("smart_"):
+            if self.hub.last_digest:
+                act_id = parse_digest(self.hub.last_digest)["activity_id"]
+            else:
+                act_id = (await self.hub.get_status())["activity_id"]
+            return self._smart_target_device(act_id), action
+        if cmd in DEVICES and action:
+            return DEVICES[cmd]["id"], action
+        return None, None
+
+    # ---- push-and-hold: gira come task separato, non passa dalla coda comandi
+
+    def queue_hold_start(self, cmd, action=None):
+        if self.loop:
+            self.loop.call_soon_threadsafe(self._start_hold, cmd, action)
+
+    def queue_hold_stop(self):
+        if self.loop:
+            self.loop.call_soon_threadsafe(self._stop_hold)
+
+    def _start_hold(self, cmd, action):
+        if self._hold_task is not None and not self._hold_task.done():
+            return
+        self._hold_stop = asyncio.Event()
+        self._hold_task = asyncio.create_task(self._hold_loop(cmd, action, self._hold_stop))
+
+    def _stop_hold(self):
+        if self._hold_stop is not None:
+            self._hold_stop.set()
+
+    async def _hold_loop(self, cmd, action, stop: asyncio.Event):
+        label = f"{cmd} {action or ''}".strip()
+        try:
+            device_id, command = await self._resolve_target(cmd, action)
+            if not device_id or not command:
+                self.result_ready.emit(label, {"error": "Nessun dispositivo per il comando tenuto premuto"})
+                return
+            self.command_progress.emit(cmd, action or "", "Holding…")
+            res = await self.hub.hold_command(device_id, command, stop)
+            self.result_ready.emit(label, res)
+        except Exception as e:
+            print(f"HOLD ERROR ({label}): {e}")
+            self.result_ready.emit(label, {"error": str(e)})
+
     def queue_command(self, cmd, action=None):
         if self.loop:
             self.loop.call_soon_threadsafe(self._cmd_queue.put_nowait, ("command", (cmd, action)))
@@ -509,6 +565,7 @@ class HarmonyWorker(QThread):
     def stop(self):
         self._running = False
         if self.loop:
+            self.loop.call_soon_threadsafe(self._stop_hold)
             self.loop.call_soon_threadsafe(self._cmd_queue.put_nowait, ("stop", None))
         self.wait()
 
@@ -524,6 +581,59 @@ class ModernBtn(QPushButton):
         self.setMinimumHeight(36)
         
         self.cmd = cmd
+
+
+class HoldBtn(ModernBtn):
+    """
+    Pulsante con push-and-hold: un click breve invia il comando normale,
+    tenendolo premuto oltre HOLD_DELAY_MS invia press/hold…/release finché
+    non lo si rilascia (come il tasto volume di un telecomando).
+    """
+    HOLD_DELAY_MS = 350
+    hold_started = pyqtSignal(str)
+    hold_stopped = pyqtSignal(str)
+
+    def __init__(self, text, cmd, icon=None):
+        super().__init__(text, cmd, icon)
+        self._holding = False
+        self._hold_timer = QTimer(self)
+        self._hold_timer.setSingleShot(True)
+        self._hold_timer.setInterval(self.HOLD_DELAY_MS)
+        self._hold_timer.timeout.connect(self._begin_hold)
+        self.setToolTip(f"{cmd}  (tieni premuto per ripetere)")
+
+    def _begin_hold(self):
+        if self.isDown():
+            self._holding = True
+            self.hold_started.emit(self.cmd)
+
+    def _end_hold(self):
+        if self._holding:
+            self._holding = False
+            self.hold_stopped.emit(self.cmd)
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._hold_timer.start()
+
+    def mouseReleaseEvent(self, event):
+        self._hold_timer.stop()
+        if self._holding:
+            # Rilascio dopo un hold: NON emettere clicked (niente comando doppio)
+            self._end_hold()
+            self.setDown(False)
+            self.update()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event):
+        # Mouse trascinato fuori dal pulsante: chiudi l'hold per non lasciare il tasto "premuto"
+        self._hold_timer.stop()
+        self._end_hold()
+        super().leaveEvent(event)
+
 
 class GUI(QMainWindow):
     def __init__(self):
@@ -699,9 +809,9 @@ class GUI(QMainWindow):
         # Questi potrebbero essere smart o fissi. Home/Back spesso variano.
         # Usiamo smart per coerenza
         n_home = self.create_btn("Home", "smart_ Home", "🏠")
-        n_back = self.create_btn("Back", "smart_ Back", "↩️") # Back command for consistency with device buttons
+        n_back = self.create_hold_btn("Back", "smart_ Back", "↩️")  # push-and-hold
         n_menu = self.create_btn("Menu", "smart_ Menu", "☰")
-        n_exit = self.create_btn("Exit", "smart_ Exit", "✖️")
+        n_exit = self.create_hold_btn("Exit", "smart_ Exit", "✖️")  # push-and-hold
         
         for b in [n_home, n_back, n_menu, n_exit]:
             b.setFixedSize(70, 36)
@@ -850,9 +960,9 @@ class GUI(QMainWindow):
         ctrl_layout.setSpacing(10)
         ctrl_layout.setContentsMargins(12, 12, 12, 12)
         
-        ctrl_layout.addWidget(self.create_btn("", "vol-", "➖"), 0, 0)
+        ctrl_layout.addWidget(self.create_hold_btn("", "vol-", "➖"), 0, 0)
         ctrl_layout.addWidget(self.create_btn("Mute", "mute", "🔇"), 0, 1)
-        ctrl_layout.addWidget(self.create_btn("", "vol+", "➕"), 0, 2)
+        ctrl_layout.addWidget(self.create_hold_btn("", "vol+", "➕"), 0, 2)
         
         main_layout.addWidget(ctrl_frame)
 
@@ -941,6 +1051,25 @@ class GUI(QMainWindow):
         # IMPORTANTE: usa lambda con default arg c=cmd per catturare il valore corrente!
         b.clicked.connect(lambda _, c=cmd: self.run(c))
         return b
+
+    def create_hold_btn(self, text, cmd, icon=None):
+        """Bottone con push-and-hold (click breve = comando singolo, premuto = ripetizione)"""
+        b = HoldBtn(text, cmd, icon)
+        b.clicked.connect(lambda _, c=cmd: self.run(c))
+        b.hold_started.connect(self.start_hold)
+        b.hold_stopped.connect(self.stop_hold)
+        return b
+
+    def start_hold(self, cmd):
+        parts = cmd.split(maxsplit=1)
+        command = parts[0]
+        action = parts[1] if len(parts) > 1 else None
+        if self._is_tv_command(command, action) and not self.is_tv_device_available():
+            return
+        self.worker.queue_hold_start(command, action)
+
+    def stop_hold(self, cmd):
+        self.worker.queue_hold_stop()
 
     def create_disabled_btn(self, text, tooltip, icon=None):
         """Helper per creare bottoni disabilitati con tooltip"""
