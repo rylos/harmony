@@ -36,6 +36,10 @@ harmony/
 - `hub_discovery.py` is standalone (stdlib only)
 - `discovery_handlers.py` uses hub.get_config_fast / get_hub_info_fast / get_provision_info_fast / get_state_digest
 
+## Releases
+- GitHub releases = annotated tag + notes (pure Python, no build artifacts). `harmony.py --version` reads `__version__` in harmony.py: bump it together with the tag.
+- v4.0 (2026-04-12), v5.0 (2026-09-24: APK-based protocol rewrite, push-and-hold, zero-config setup / issue #1).
+
 ## Branches
 - Single branch `main` (the APK-based protocol rewrite was merged fast-forward on 2026-09-13 after the user validated it). For risky changes create a feature branch and let the user merge.
 
