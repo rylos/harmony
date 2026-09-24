@@ -13,7 +13,7 @@ Reference doc: `HARMONY_APK_PROTOCOL_ANALYSIS.md` (repo). Read it before touchin
 - Keepalive: aiohttp `heartbeat=45` (app pings every 45s). Socket timeout on hub side 60s.
 - Sleep timer: `set_sleep_timer(seconds)`, -1 cancels; **0 powers everything off immediately** (verified, caused an accidental shutdown once). CLI: `sleep <min>` / `sleep off`.
 - `ping_http()`: HTTP POST `:8088` with `Origin: http://localhost.nebula.myharmony.com`; fw 4.15 answers 417 to `connect.ping` but that still means reachable.
-- Discovery: `hub_discovery.discover_hubs()` — TCP server on 5446, UDP broadcast `_logitech-reverse-bonjour._tcp.local.\n5446` to port 5224, hub connects back with `k:v;k:v` string. CLI `find-hub` works without config.py (config import is lazy; `require_config()` guards other commands).
+- Discovery: `hub_discovery.discover_hubs()` — TCP server on 5446, UDP broadcast `_logitech-reverse-bonjour._tcp.local.\n5446` to port 5224, hub connects back with `k:v;k:v` string. CLI `find-hub` works without config.py (config import is lazy). Since 2026-09-24 (issue #1) also `discover`, `export-config`, `show-*`, `status`, `digest`, `sysinfo`, `ping`, `events` (`NO_CONFIG_COMMANDS`) work without config: `resolve_hub()` uses UDP discovery or `--ip` (+ `fetch_remote_id()` via HTTP `setup.account?getProvisionInfo` → `activeRemoteId`), `FastHarmonyHub(hub_ip=, remote_id=)`; `export-config` writes config.py next to harmony.py. Other commands → `require_config()`.
 
 ## GUI (harmony_gui.py)
 - `HarmonyWorker` creates `FastHarmonyHub(event_callback=self._on_hub_event)`; statedigest events → `_publish_status()` → `status_updated` signal; `startActivityFinished`/connected → queue "status"; disconnected → queue "reconnect". `hub_event` signal also exposed.
