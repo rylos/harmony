@@ -403,25 +403,32 @@ class DiscoveryHandlers:
             
             # Export configuration
             try:
+                import os
                 from config_exporter import ConfigExporter
                 from config_models import HubInfo
-                import config
-                
-                # Create HubInfo with current configuration
+
+                # IP e remoteId dalla connessione in uso: funziona anche senza
+                # config.py (Hub trovato via discovery o --ip)
                 hub_info = HubInfo(
-                    ip=config.HUB_IP,
-                    remote_id=config.REMOTE_ID,
+                    ip=self.hub.hub_ip,
+                    remote_id=self.hub.remote_id,
                     name="Harmony Hub",
                     firmware_version="Unknown",
                     model="Harmony Hub",
                     serial_number="Unknown"
                 )
-                
-                exporter = ConfigExporter()
+
+                # config.py va accanto a harmony.py, qualunque sia la directory corrente
+                config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.py")
+                existed = os.path.exists(config_path)
+                exporter = ConfigExporter(config_path)
                 success = exporter.export_to_config_file(parsed_config, hub_info, backup_existing=True)
                 if success:
-                    print("✅ Configurazione esportata in config.py")
-                    print("📁 Backup del file esistente creato")
+                    print(f"✅ Configuration exported to {config_path}")
+                    if existed:
+                        print("📁 Previous config.py kept as backup")
+                    else:
+                        print("💡 Next: ./harmony.py list  or  ./start_harmony_gui.sh")
                     
                     if self.verbose:
                         print(f"⚡ Configurazione esportata in {exec_time:.3f}s")

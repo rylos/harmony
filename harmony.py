@@ -14,9 +14,14 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 CONFIG_MISSING_MSG = (
     "❌ Configuration file 'config.py' not found.\n"
-    "   Run './harmony.py find-hub' to locate your Hub, then create config.py\n"
-    "   (copy 'config.sample.py' or use 'export-config')."
+    "   Run './harmony.py export-config' to find your Hub on the LAN and create it\n"
+    "   (add '--ip <hub ip>' if automatic discovery doesn't find the Hub)."
 )
+
+# Comandi che funzionano anche senza config.py: l'Hub viene trovato via discovery
+# UDP (o con --ip) e i comandi di discovery servono proprio a generare config.py
+NO_CONFIG_COMMANDS = {"find-hub", "discover", "export-config", "show-hub", "show-activity",
+                      "show-device", "status", "digest", "sysinfo", "ping", "events"}
 
 try:
     import config
@@ -103,9 +108,13 @@ class FastHarmonyHub:
     ACTIVITY_TIMEOUT = 60.0     # timeout avvio attività (come l'app)
     PING_INTERVAL = 45.0        # PING_INTERVAL dell'app
 
-    def __init__(self, verbose_logging: bool = False, event_callback: Optional[Callable[[str, Dict], None]] = None):
-        self.base_url = f"http://{HUB_IP}:8088"
-        self.ws_url = f"{self.base_url}/?domain=svcs.myharmony.com&hubId={REMOTE_ID}"
+    def __init__(self, verbose_logging: bool = False, event_callback: Optional[Callable[[str, Dict], None]] = None,
+                 hub_ip: Optional[str] = None, remote_id: Optional[str] = None):
+        # IP e remoteId espliciti (discovery senza config.py) o da config.py
+        self.hub_ip = hub_ip or HUB_IP
+        self.remote_id = str(remote_id or REMOTE_ID)
+        self.base_url = f"http://{self.hub_ip}:8088"
+        self.ws_url = f"{self.base_url}/?domain=svcs.myharmony.com&hubId={self.remote_id}"
         self.session: Optional[aiohttp.ClientSession] = None
         self._connected = False
         self._ws: Optional[aiohttp.ClientWebSocketResponse] = None
@@ -146,7 +155,7 @@ class FastHarmonyHub:
         self._connect_time = time.monotonic()
         if self._reader_task is None or self._reader_task.done():
             self._reader_task = asyncio.create_task(self._reader_loop(self._ws))
-        self._emit_event(EVENT_CONNECTED, {"ip": HUB_IP})
+        self._emit_event(EVENT_CONNECTED, {"ip": self.hub_ip})
 
     async def close(self):
         self._connected = False
@@ -559,8 +568,8 @@ class FastHarmonyHub:
                 print(f"⚠️  discoveryinfo non disponibile: {e}")
         activity_id = str(digest.get("activityId", "-1")) if digest else None
         hub_info = {
-            "ip": HUB_IP,
-            "remote_id": REMOTE_ID,
+            "ip": self.hub_ip,
+            "remote_id": self.remote_id,
             "current_activity": {"data": {"result": activity_id}} if activity_id is not None else {},
             "name": discovery.get("friendlyName", ""),
             "firmware_version": digest.get("hubSwVersion", "") or discovery.get("current_fw_version", ""),
@@ -684,6 +693,60 @@ def describe_status(st: Dict) -> str:
     if activity_name(aid):
         return f"🟢 {name}"
     return f"🟡 {name}"
+
+async def fetch_remote_id(hub_ip: str, timeout: float = 5.0) -> Optional[str]:
+    """remoteId dell'Hub via HTTP POST setup.account?getProvisionInfo (activeRemoteId)."""
+    headers = {
+        "Origin": "http://localhost.nebula.myharmony.com",
+        "Referer": "http://localhost.nebula.myharmony.com/mobile-fat.html",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(f"http://{hub_ip}:8088/",
+                                    json={"id": "124", "cmd": "setup.account?getProvisionInfo"},
+                                    headers=headers, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                body = await resp.json(content_type=None)
+        remote_id = (body.get("data") or {}).get("activeRemoteId")
+        return str(remote_id) if remote_id else None
+    except Exception:
+        return None
+
+
+async def resolve_hub(args) -> Tuple[Optional[str], Optional[str]]:
+    """
+    IP e remoteId quando config.py manca (o con --ip):
+    --ip → remoteId via HTTP; altrimenti discovery UDP sulla LAN.
+    """
+    if args.ip:
+        remote_id = await fetch_remote_id(args.ip)
+        if not remote_id:
+            print(f"❌ No Harmony Hub answering at {args.ip}:8088")
+            return None, None
+        if args.verbose:
+            print(f"🔗 Hub {args.ip} (remoteId {remote_id})")
+        return args.ip, remote_id
+
+    from hub_discovery import discover_hubs, hub_summary
+    print(f"🔍 config.py not found: searching the LAN for a Harmony Hub ({args.timeout:.0f}s)…")
+    try:
+        hubs = await discover_hubs(timeout=args.timeout, first_only=True, verbose=args.verbose)
+    except OSError as e:
+        print(f"❌ {e}")
+        hubs = []
+    if not hubs:
+        print("❌ No Hub found automatically.")
+        print("   This PC must be on the same LAN as the Hub, and the firewall must allow UDP")
+        print("   broadcast to port 5224 and incoming TCP connections on port 5446.")
+        print("   Alternatively pass the Hub IP (see your router's DHCP list):")
+        print(f"   ./harmony.py {args.command} --ip 192.168.1.X")
+        return None, None
+    hub = hubs[0]
+    print(f"✅ {hub_summary(hub)}")
+    remote_id = hub.get("remoteId") or await fetch_remote_id(hub.get("ip", ""))
+    return hub.get("ip"), remote_id
+
 
 async def _run_activity(hub: FastHarmonyHub, activity_id: str, name: str, args) -> Dict:
     """Avvia un'attività dalla CLI, attendendo (salvo --no-wait) la conferma via evento."""
@@ -813,6 +876,7 @@ async def main():
     parser.add_argument('--no-wait', action='store_true', help='Attività: non attendere la conferma dell\'Hub (ritorna subito)')
     parser.add_argument('--hold', type=float, metavar='SEC', help='Dispositivi: tieni premuto il tasto per SEC secondi')
     parser.add_argument('--timeout', type=float, default=6.0, help='find-hub/events: durata in secondi (default 6)')
+    parser.add_argument('--ip', help='IP dell\'Hub (salta la discovery automatica quando config.py manca)')
     
     args = parser.parse_args()
     
@@ -847,10 +911,20 @@ async def main():
             if args.verbose:
                 for k, v in sorted(h.items()):
                     print(f"     {k}: {v}")
-        print("\n💡 In config.py: HUB_IP = \"%s\", REMOTE_ID = \"%s\"" % (hubs[0].get("ip", "?"), hubs[0].get("remoteId", "?")))
+        if config is None:
+            print("\n💡 Create config.py with: ./harmony.py export-config")
+        else:
+            print("\n💡 In config.py: HUB_IP = \"%s\", REMOTE_ID = \"%s\"" % (hubs[0].get("ip", "?"), hubs[0].get("remoteId", "?")))
         return
 
-    require_config()
+    # Senza config.py i comandi di discovery/diagnostica trovano l'Hub da soli
+    hub_ip, remote_id = None, None
+    if config is None or args.ip:
+        if cmd not in NO_CONFIG_COMMANDS:
+            require_config()
+        hub_ip, remote_id = await resolve_hub(args)
+        if not hub_ip:
+            return
 
     if cmd == "list":
         print("╭─────────────────────────────────────────────────────────╮")
@@ -922,7 +996,7 @@ async def main():
         return
     
     # 🚀 COMANDI ULTRA-VELOCI
-    async with FastHarmonyHub(verbose_logging=args.verbose) as hub:
+    async with FastHarmonyHub(verbose_logging=args.verbose, hub_ip=hub_ip, remote_id=remote_id) as hub:
         cmd = args.command.lower()
         use_pr = not args.no_press_release  # Press/Release abilitato di default
         
@@ -932,7 +1006,7 @@ async def main():
                 try:
                     from discovery_handlers import handle_discovery_command
                     success = await handle_discovery_command(
-                        hub, cmd, args.action, args.verbose, HUB_IP, REMOTE_ID
+                        hub, cmd, args.action, args.verbose, hub.hub_ip, hub.remote_id
                     )
                     if not success:
                         return  # Error already printed by handler

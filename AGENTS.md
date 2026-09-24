@@ -17,10 +17,7 @@ Controller CLI+GUI ibrido per Logitech Harmony Hub, con comunicazione WebSocket 
 python3 -m venv harmony_env
 source harmony_env/bin/activate
 pip install -r requirements.txt
-cp config.sample.py config.py   # poi modifica con i tuoi dati
-# Oppure scopri automaticamente:
-python harmony.py discover
-python harmony.py export-config
+./harmony.py export-config     # trova l'Hub sulla LAN e crea config.py (--ip se la discovery fallisce)
 
 # CLI
 source harmony_env/bin/activate
@@ -71,7 +68,7 @@ config.sample.py            → Template di config.py.
 - **Error handling**: decorator `@network_retry` su `connect()`; retry su ClientError/TimeoutError/ConnectionError. Il worker GUI non muore se il Hub è irraggiungibile: ritenta la connessione ogni 5s e si riconnette all'evento `client.disconnected`. Keepalive: heartbeat PING aiohttp ogni 45s (come l'app).
 - **Stato GUI via eventi**: `HarmonyWorker._on_hub_event` riceve `connect.statedigest?notify` e aggiorna subito la label (anche "⏳ Avvio: …" per le transizioni, che `GUI.on_status` mostra senza toccare lo StateManager). Il QTimer da 60s è solo fallback.
 - **Sleep timer**: `set_sleep_timer(secondi)`; -1 annulla. ATTENZIONE: interval 0 spegne tutto immediatamente (verificato sul firmware 4.15.600).
-- **Config**: import diretta di `config.py` (non YAML/JSON). Se manca, exit con messaggio d'errore.
+- **Config**: import diretta di `config.py` (non YAML/JSON). Se manca, i comandi in `NO_CONFIG_COMMANDS` (discover, export-config, show-*, status, digest, sysinfo, ping, events, find-hub) trovano l'Hub da soli (`resolve_hub`: discovery UDP, oppure `--ip` + remoteId via HTTP `getProvisionInfo`) e `export-config` crea `config.py` accanto a `harmony.py`; gli altri comandi escono con `CONFIG_MISSING_MSG`. I messaggi di questo percorso di primo avvio sono in inglese (utenti esterni, issue #1).
 - **Press/Release**: come l'app — `press` e `release` entrambi fire-and-forget con lo STESSO id e `timestamp` = ms dalla connessione; attesa 20ms tra i due; poi al massimo 100ms (`ack_timeout`) per intercettare un errore dell'Hub (565 device/566 command not found). L'Hub non risponde ai comandi validi. `send_device_hold()` invia `hold` ripetuti (`--hold SEC`). `--no-press-release` invia `pressrelease`.
 - **Attività**: `start_activity_fast(id, wait=True)` attende l'evento di fine (statedigest `activityStatus=2` o `startActivityFinished`), timeout 60s; `--no-wait` nella CLI.
 - **Test sull'Hub reale**: comandi read-only sicuri: `status`, `digest`, `sysinfo`, `ping`, `events`, `find-hub`. Tutto il resto muove dispositivi veri: non lanciarlo senza motivo.

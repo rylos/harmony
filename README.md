@@ -36,25 +36,23 @@ pip install -r requirements.txt
 
 ## Configuration
 
-1. Find your Hub (works without any configuration):
+Generate `config.py` straight from the Hub. No manual setup is needed: the Hub is found automatically on the LAN.
 
-   ```bash
-   ./harmony.py find-hub
-   # ✅ Living Room  ip=192.168.1.50  remoteId=1234567  fw=4.15.600 ...
-   ```
+```bash
+./harmony.py discover        # optional: review what the Hub reports
+./harmony.py export-config   # find the Hub and write config.py with your activities and devices
+# 🔍 config.py not found: searching the LAN for a Harmony Hub (6s)…
+# ✅ Living Room  ip=192.168.1.50  remoteId=1234567  fw=4.15.600 ...
+# ✅ Configuration exported to /path/to/harmony/config.py
+```
 
-2. Create `config.py` from the template and set `HUB_IP` and `REMOTE_ID`:
+If automatic discovery can't see the Hub, pass its IP (from your router's DHCP list):
 
-   ```bash
-   cp config.sample.py config.py
-   ```
+```bash
+./harmony.py export-config --ip 192.168.1.50
+```
 
-3. Let the Hub fill in activities, devices and commands:
-
-   ```bash
-   ./harmony.py discover        # review what the Hub reports
-   ./harmony.py export-config   # rewrite config.py with your activities and devices
-   ```
+Run `export-config` again whenever you change activities or devices in the Harmony app; the previous file is kept as a backup.
 
 `config.py` is git-ignored. Edit the aliases in it to taste (`tv`, `shield`, `onkyo`…): they become the CLI commands and GUI buttons.
 
@@ -109,9 +107,9 @@ Full protocol notes, including what was verified on real hardware, are in [`HARM
 
 ## Troubleshooting
 
-**`config.py` not found** – run `./harmony.py find-hub`, copy `config.sample.py` to `config.py`, then `export-config`.
+**`config.py` not found** – run `./harmony.py export-config` (add `--ip <hub ip>` if the Hub isn't found automatically).
 
-**`find-hub` finds nothing** – the PC must be on the same LAN as the Hub (no VLAN/guest network), UDP broadcast to port 5224 and an incoming TCP connection on port 5446 must be allowed by the firewall. As a fallback, read the Hub IP from your router and put it in `config.py` by hand.
+**`find-hub` finds nothing** – the PC must be on the same LAN as the Hub (no VLAN/guest network), UDP broadcast to port 5224 and an incoming TCP connection on port 5446 must be allowed by the firewall. As a fallback, read the Hub IP from your router and use `--ip`.
 
 **"Hub non raggiungibile" in the GUI** – the app retries every 5 s. Check `./harmony.py ping`; a Hub on 2.4 GHz Wi-Fi with heavy packet loss shows exactly this symptom.
 
