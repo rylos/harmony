@@ -12,6 +12,8 @@ import sys
 import time
 from typing import Callable, Dict, List, Optional, Tuple
 
+__version__ = "5.0"
+
 CONFIG_MISSING_MSG = (
     "❌ Configuration file 'config.py' not found.\n"
     "   Run './harmony.py export-config' to find your Hub on the LAN and create it\n"
@@ -869,6 +871,7 @@ async def main():
         """
     )
     
+    parser.add_argument('--version', action='version', version=f'Harmony Hub Controller {__version__}')
     parser.add_argument('command', nargs='?', help='Comando da eseguire (usa "help" per guida completa)')
     parser.add_argument('action', nargs='?', help='Azione per dispositivo (es: PowerOn) o ID per discovery commands (es: activity/device ID)')
     parser.add_argument('-v', '--verbose', action='store_true', help='Output dettagliato con metriche performance')

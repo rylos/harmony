@@ -1,27 +1,22 @@
 #!/bin/bash
+# Avvia la GUI di Harmony Hub Controller usando il venv del progetto (se presente)
 
-echo "🌃 Harmony Hub GUI - Tokyo Night Edition"
-echo "========================================"
-
-# Controlla ambiente grafico
-if [ -z "$DISPLAY" ]; then
-  echo "❌ Ambiente grafico non disponibile"
-  exit 1
-fi
-
-# Path dinamico
 HARMONY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$HARMONY_DIR"
+cd "$HARMONY_DIR" || exit 1
 
-# Verifica file
-if [ ! -f "harmony.py" ] || [ ! -f "harmony_gui.py" ]; then
-  echo "❌ File mancanti"
+# Serve una sessione grafica (X11 o Wayland)
+if [ -z "$DISPLAY" ] && [ -z "$WAYLAND_DISPLAY" ]; then
+  echo "❌ No graphical session found (DISPLAY/WAYLAND_DISPLAY not set)"
   exit 1
 fi
 
-echo "✅ Avvio GUI..."
+if [ ! -f "config.py" ]; then
+  echo "❌ config.py not found. Create it first with: ./harmony.py export-config"
+  exit 1
+fi
 
-# Attiva venv e avvia
-source harmony_env/bin/activate
-exec ./harmony_gui.py
-
+# venv del progetto se esiste, altrimenti python3 di sistema
+if [ -x "harmony_env/bin/python" ]; then
+  exec harmony_env/bin/python harmony_gui.py "$@"
+fi
+exec python3 harmony_gui.py "$@"
