@@ -583,6 +583,19 @@ class ModernBtn(QPushButton):
         self.cmd = cmd
 
 
+# Testo mostrato nella scritta di stato mentre un tasto è tenuto premuto
+HOLD_LABELS = {
+    "vol+": "Volume +",
+    "vol-": "Volume −",
+    "smart_ DirectionUp": "Su",
+    "smart_ DirectionDown": "Giù",
+    "smart_ DirectionLeft": "Sinistra",
+    "smart_ DirectionRight": "Destra",
+    "smart_ Back": "Back",
+    "smart_ Exit": "Exit",
+}
+
+
 class HoldBtn(ModernBtn):
     """
     Pulsante con push-and-hold: un click breve invia il comando normale,
@@ -645,6 +658,7 @@ class GUI(QMainWindow):
         # Create StateManager instance
         self.state_manager = StateManager()
         self._last_status_text = None  # ultimo stato reale ricevuto dall'Hub
+        self._holding_cmd = None       # comando del tasto tenuto premuto, se c'è
         
         # Create HarmonyWorker with StateManager integration
         self.worker = HarmonyWorker(state_manager=self.state_manager)
@@ -1069,9 +1083,19 @@ class GUI(QMainWindow):
         if self._is_tv_command(command, action) and not self.is_tv_device_available():
             return
         self.worker.queue_hold_start(command, action)
+        # Riscontro visivo: la scritta mostra il tasto in ripetizione finché è premuto
+        self._holding_cmd = cmd
+        self.status.setText(f"⏩ {HOLD_LABELS.get(cmd, action or command)}")
+        self.status.setStyleSheet(f"QLabel#Status {{ color: {C['accent']}; border-color: {C['accent']}; }}")
 
     def stop_hold(self, cmd):
         self.worker.queue_hold_stop()
+        # Rilascio: torna all'ultimo stato reale ricevuto dall'Hub
+        self._holding_cmd = None
+        if self._last_status_text:
+            self.on_status(self._last_status_text)
+        else:
+            self.update_status()
 
     def create_disabled_btn(self, text, tooltip, icon=None):
         """Helper per creare bottoni disabilitati con tooltip"""
@@ -1192,7 +1216,10 @@ class GUI(QMainWindow):
         """Handle status changes from StateManager."""
         if not status_text:
             # "Torna allo stato reale": l'ultimo stato ricevuto dall'Hub (via evento push
-            # o richiesta) è già aggiornato, quindi niente richiesta in più a ogni click
+            # o richiesta) è già aggiornato, quindi niente richiesta in più a ogni click.
+            # Con un tasto tenuto premuto ci pensa stop_hold al rilascio.
+            if self._holding_cmd:
+                return
             if self._last_status_text:
                 self.on_status(self._last_status_text)
             else:
@@ -1236,6 +1263,11 @@ class GUI(QMainWindow):
     def on_status(self, status_text):
         # Ultimo stato reale dell'Hub, riusato quando lo StateManager chiede di tornarci
         self._last_status_text = status_text
+
+        # Tasto tenuto premuto: la scritta "⏩ …" resta finché non lo si rilascia
+        # (lo stato ricevuto ora viene applicato al rilascio, in stop_hold)
+        if self._holding_cmd:
+            return
 
         # Transizione in corso (avvio/spegnimento attività, anche da telecomando fisico):
         # mostra il testo così com'è senza toccare lo StateManager
