@@ -644,6 +644,7 @@ class GUI(QMainWindow):
         
         # Create StateManager instance
         self.state_manager = StateManager()
+        self._last_status_text = None  # ultimo stato reale ricevuto dall'Hub
         
         # Create HarmonyWorker with StateManager integration
         self.worker = HarmonyWorker(state_manager=self.state_manager)
@@ -1190,7 +1191,12 @@ class GUI(QMainWindow):
     def on_state_status_changed(self, status_text, color):
         """Handle status changes from StateManager."""
         if not status_text:
-            self.update_status()
+            # "Torna allo stato reale": l'ultimo stato ricevuto dall'Hub (via evento push
+            # o richiesta) è già aggiornato, quindi niente richiesta in più a ogni click
+            if self._last_status_text:
+                self.on_status(self._last_status_text)
+            else:
+                self.update_status()
         else:
             self.status.setText(status_text)
             self.status.setStyleSheet(f"QLabel#Status {{ color: {color}; border-color: {color}; }}")
@@ -1228,6 +1234,9 @@ class GUI(QMainWindow):
         self.worker.queue_status()
     
     def on_status(self, status_text):
+        # Ultimo stato reale dell'Hub, riusato quando lo StateManager chiede di tornarci
+        self._last_status_text = status_text
+
         # Transizione in corso (avvio/spegnimento attività, anche da telecomando fisico):
         # mostra il testo così com'è senza toccare lo StateManager
         if status_text.startswith("⏳"):

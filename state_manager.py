@@ -296,6 +296,12 @@ class StateManager(QObject):
             # For successful activity commands, show brief completion feedback
             # then schedule return to real state
             self._show_activity_completion()
+        elif success and not self._command_queue:
+            # Comandi dispositivo/audio riusciti: l'Hub non manda eventi che li confermino
+            # (lo stato non cambia), quindi si torna subito allo stato reale. Si usa il
+            # segnale (sicuro tra thread: questo metodo gira nel thread del worker) e non
+            # un QTimer, che lì non scatterebbe perché il worker non ha un event loop Qt.
+            self.status_changed.emit("", "#c0caf5")
     
     def _show_activity_completion(self):
         """
