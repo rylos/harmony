@@ -86,6 +86,9 @@ def get_tv_error_message(error_message):
     if not error_message:
         return "TV command failed"
     msg = error_message.lower()
+    # 566 dall'Hub: la TV c'è, ma non ha un comando con quel nome
+    if "command not found" in msg:
+        return "Command not supported by the TV"
     if "not configured" in msg or "not found" in msg:
         return "TV device not configured in Harmony Hub"
     if "validation failed" in msg:

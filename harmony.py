@@ -94,6 +94,14 @@ ACTIVITY_STOPPING = 3
 
 CMD_ENGINE = "vnd.logitech.harmony/vnd.logitech.harmony.engine"
 
+# Nomi alternativi dello stesso comando IR: nel database Logitech il codice da inviare
+# non coincide sempre con il nome della funzione (es. TV Samsung: funzione
+# "PrevChannel", comando "ChannelPrev"). Si prova l'alternativa solo se l'Hub risponde 566.
+COMMAND_ALIASES = {
+    "ChannelPrev": ("PrevChannel", "PreviousChannel"),
+    "PrevChannel": ("ChannelPrev", "PreviousChannel"),
+}
+
 
 class FastHarmonyHub:
     """
@@ -378,6 +386,21 @@ class FastHarmonyHub:
 
     async def send_device_fast(self, device_id: str, command: str, use_press_release: bool = True,
                                ack_timeout: float = 0.1, hold_ms: int = 20) -> Dict:
+        """
+        Comando dispositivo; se l'Hub risponde 566 (comando inesistente) e il comando ha
+        un nome alternativo noto (COMMAND_ALIASES), riprova con quello. Il retry è sicuro:
+        con 566 l'Hub non ha inviato nessun IR, quindi niente doppio comando.
+        """
+        result = await self._send_device_once(device_id, command, use_press_release, ack_timeout, hold_ms)
+        if str(result.get("code")) == "566":
+            for alt in COMMAND_ALIASES.get(command, ()):
+                alt_result = await self._send_device_once(device_id, alt, use_press_release, ack_timeout, hold_ms)
+                if str(alt_result.get("code")) != "566":
+                    return alt_result
+        return result
+
+    async def _send_device_once(self, device_id: str, command: str, use_press_release: bool = True,
+                                ack_timeout: float = 0.1, hold_ms: int = 20) -> Dict:
         """
         Comando dispositivo come l'app ufficiale: press e release fire-and-forget,
         stesso id, timestamp relativo. Attende al massimo ack_timeout l'eventuale

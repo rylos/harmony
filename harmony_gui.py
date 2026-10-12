@@ -986,7 +986,9 @@ class GUI(QMainWindow):
         # Canali sulla TV, disposti come sul telecomando: CH −, canale precedente, CH +
         # (CH ± con push-and-hold per scorrere i canali)
         ch_down = self.create_tv_command("ChannelDown")
-        ch_prev = self.create_tv_command("PrevChannel")
+        # Codice IR "ChannelPrev" (la funzione si chiama "PrevChannel"; l'Hub prova
+        # comunque l'altro nome se questo non esiste su un'altra TV, vedi COMMAND_ALIASES)
+        ch_prev = self.create_tv_command("ChannelPrev")
         ch_up = self.create_tv_command("ChannelUp")
         if ch_down and ch_prev and ch_up:
             b_ch_down = self.create_hold_btn("CH", ch_down, "➖")
