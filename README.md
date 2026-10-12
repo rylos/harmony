@@ -15,7 +15,7 @@ Local CLI and desktop remote for the Logitech Harmony Hub. No cloud, no polling:
 
 - **Instant state** – the Hub pushes every change (also from the physical remote); the GUI reflects it in real time, including "starting…" and "stopping…" transitions.
 - **Fast commands** – device keys are sent as press/release like a real remote (~20 ms), activities wait for the Hub's real completion event.
-- **Push-and-hold** – keep volume, D-pad, Back and Exit pressed to repeat, exactly like on the remote.
+- **Push-and-hold** – keep volume, channel, D-pad, Back and Exit pressed to repeat, exactly like on the remote.
 - **Smart remote** – navigation keys follow the running activity (TV, media player, receiver).
 - **Auto-discovery** – finds the Hub on the LAN and generates the configuration from it.
 - **CLI + GUI** – script it from the shell or use the Qt6 desktop app, with KDE menu entry and shell aliases.

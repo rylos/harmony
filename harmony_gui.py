@@ -593,6 +593,9 @@ HOLD_LABELS = {
     "smart_ DirectionRight": "Destra",
     "smart_ Back": "Back",
     "smart_ Exit": "Exit",
+    # per azione: il comando completo contiene l'alias della TV, che dipende dalla config
+    "ChannelUp": "Canale +",
+    "ChannelDown": "Canale −",
 }
 
 
@@ -967,8 +970,8 @@ class GUI(QMainWindow):
         remote_layout.addLayout(tv_col)
         main_layout.addWidget(remote_frame)
 
-        # 4. Audio & System
-        self.add_section_header(main_layout, "AUDIO & SYSTEM")
+        # 4. Volume e canali
+        self.add_section_header(main_layout, "VOLUME & CANALI")
         
         ctrl_frame = QFrame()
         ctrl_frame.setObjectName("Card")
@@ -979,7 +982,25 @@ class GUI(QMainWindow):
         ctrl_layout.addWidget(self.create_hold_btn("", "vol-", "➖"), 0, 0)
         ctrl_layout.addWidget(self.create_btn("Mute", "mute", "🔇"), 0, 1)
         ctrl_layout.addWidget(self.create_hold_btn("", "vol+", "➕"), 0, 2)
-        
+
+        # Canali sulla TV, disposti come sul telecomando: CH −, canale precedente, CH +
+        # (CH ± con push-and-hold per scorrere i canali)
+        ch_down = self.create_tv_command("ChannelDown")
+        ch_prev = self.create_tv_command("PrevChannel")
+        ch_up = self.create_tv_command("ChannelUp")
+        if ch_down and ch_prev and ch_up:
+            b_ch_down = self.create_hold_btn("CH", ch_down, "➖")
+            b_ch_prev = self.create_btn("Prev", ch_prev, "↺")
+            b_ch_up = self.create_hold_btn("CH", ch_up, "➕")
+        else:
+            msg = self.get_tv_unavailable_message()
+            b_ch_down = self.create_disabled_btn("CH", msg, "➖")
+            b_ch_prev = self.create_disabled_btn("Prev", msg, "↺")
+            b_ch_up = self.create_disabled_btn("CH", msg, "➕")
+        ctrl_layout.addWidget(b_ch_down, 1, 0)
+        ctrl_layout.addWidget(b_ch_prev, 1, 1)
+        ctrl_layout.addWidget(b_ch_up, 1, 2)
+
         main_layout.addWidget(ctrl_frame)
 
         # 5. Devices
@@ -1085,7 +1106,8 @@ class GUI(QMainWindow):
         self.worker.queue_hold_start(command, action)
         # Riscontro visivo: la scritta mostra il tasto in ripetizione finché è premuto
         self._holding_cmd = cmd
-        self.status.setText(f"⏩ {HOLD_LABELS.get(cmd, action or command)}")
+        label = HOLD_LABELS.get(cmd) or HOLD_LABELS.get(action or "") or action or command
+        self.status.setText(f"⏩ {label}")
         self.status.setStyleSheet(f"QLabel#Status {{ color: {C['accent']}; border-color: {C['accent']}; }}")
 
     def stop_hold(self, cmd):
