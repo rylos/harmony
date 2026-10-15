@@ -593,6 +593,7 @@ HOLD_LABELS = {
     "smart_ DirectionRight": "Destra",
     "smart_ Back": "Back",
     "smart_ Exit": "Exit",
+    "smart_ Select": "OK",
     # per azione: il comando completo contiene l'alias della TV, che dipende dalla config
     "ChannelUp": "Canale +",
     "ChannelDown": "Canale −",
@@ -806,7 +807,7 @@ class GUI(QMainWindow):
         d_down = self.create_hold_btn("", "smart_ DirectionDown", "▾")
         d_left = self.create_hold_btn("", "smart_ DirectionLeft", "◂")
         d_right = self.create_hold_btn("", "smart_ DirectionRight", "▸")
-        d_ok = self.create_btn("OK", "smart_ Select", "")
+        d_ok = self.create_hold_btn("OK", "smart_ Select", "")  # long press: menu contestuale su Shield/TV
         
         for b in [d_up, d_down, d_left, d_right, d_ok]:
             b.setFixedSize(40, 40)
