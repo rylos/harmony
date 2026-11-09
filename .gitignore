@@ -32,3 +32,10 @@ config.py
 tmp/
 .directory
 .kiro/
+
+# Firmware build artifacts / local inputs (never commit keys or stock images)
+firmware/work/
+firmware/stock-rootfs/
+firmware/dropbearmulti-min
+firmware/mtdwrite
+firmware/*.squashfs
